@@ -400,4 +400,8 @@ def calculate_order_performance(df):
         agg_dict["Sales_USD"] = "sum"
     if "Total_Cost" in order_df.columns:
         agg_dict["Total_Cost"] = "sum"
-    if "Total_DP```
+    if "Total_DPVR" in order_df.columns:
+        agg_dict["Total_DPVR"] = "sum"
+    if "Total_Purchase_Rate" in order_df.columns:
+        agg_dict["Total_Purchase_Rate"] = "sum"     
+        
