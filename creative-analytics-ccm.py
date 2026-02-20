@@ -799,83 +799,97 @@ if uploaded_file is not None:
     # Overlay controls right under chart header
     col1, col2 = st.columns([1, 2])
     with col1:
-        show_order_line = st.checkbox(
-            "Overlay Order Performance",
-            value=True,
-            help="Show red dashed line for overall order performance"
+        show_benchmark = st.checkbox(
+            "Overlay Benchmark Line",
+            value=False,
+            help="Show benchmark performance line"
         )
     with col2:
-        # Put benchmark checkbox and input field side by side
-        benchmark_col1, benchmark_col2 = st.columns([1, 1])
-        with benchmark_col1:
-            show_benchmark = st.checkbox(
-                "Overlay Benchmark Line",
-                value=False,
-                help="Show benchmark performance line"
-            )
-        with benchmark_col2:
-            # Default benchmark values
-            benchmark_ctr = 2.0
-            benchmark_dpvr = 1.5
-            benchmark_pr = 0.5
-            benchmark_promoted = 4.0
-            benchmark_total = 6.0
+        # Default benchmark values
+        benchmark_ctr = 2.0
+        benchmark_dpvr = 1.5
+        benchmark_pr = 0.5
+        benchmark_promoted = 4.0
+        benchmark_total = 6.0
+        benchmark_ctr_category = 2.2
+        benchmark_dpvr_category = 1.8
+        benchmark_pr_category = 0.6
+        benchmark_promoted_category = 4.5
+        benchmark_total_category = 6.5
 
-            # Show benchmark input only for current metric if enabled
-            if show_benchmark:
-                benchmark_labels = {
-                    "CTR": "CTR",
-                    "DPVR": "Promoted DPVR",
-                    "Purchase_Rate": "Promoted Purchase Rate",
-                    "Promoted_ROAS": "Promoted ROAS",
-                    "Total_ROAS": "Total ROAS",
-                    "Total_DPVR": "Total DPVR",
-                    "Total_Purchase_Rate": "Total Purchase Rate",
-                }
-                units = {"CTR": "%", "DPVR": "%", "Purchase_Rate": "%", "Promoted_ROAS": "$", "Total_ROAS": "$", "Total_DPVR": "%", "Total_Purchase_Rate": "%"}
-                examples = {"CTR": "2.0", "DPVR": "1.5", "Purchase_Rate": "0.5", "Promoted_ROAS": "4.0", "Total_ROAS": "6.0", "Total_DPVR": "2.5", "Total_Purchase_Rate": "0.8"}
+        # Show benchmark inputs only for current metric if enabled
+        if show_benchmark:
+            benchmark_labels = {
+                "CTR": "CTR",
+                "DPVR": "Promoted DPVR",
+                "Purchase_Rate": "Promoted Purchase Rate",
+                "Promoted_ROAS": "Promoted ROAS",
+                "Total_ROAS": "Total ROAS",
+                "Total_DPVR": "Total DPVR",
+                "Total_Purchase_Rate": "Total Purchase Rate",
+            }
+            units = {"CTR": "%", "DPVR": "%", "Purchase_Rate": "%", "Promoted_ROAS": "$", "Total_ROAS": "$", "Total_DPVR": "%", "Total_Purchase_Rate": "%"}
+            examples = {"CTR": "2.0", "DPVR": "1.5", "Purchase_Rate": "0.5", "Promoted_ROAS": "4.0", "Total_ROAS": "6.0", "Total_DPVR": "2.5", "Total_Purchase_Rate": "0.8"}
 
-                if metric in benchmark_labels:
-                    benchmark_value = st.number_input(
-                        f"{benchmark_labels[metric]} Benchmark ({units[metric]})",
+            if metric in benchmark_labels:
+                bench_col1, bench_col2 = st.columns([1, 1])
+                with bench_col1:
+                    advertiser_benchmark = st.number_input(
+                        f"Advertiser Benchmark ({units[metric]})",
                         min_value=0.0,
                         max_value=100.0,
                         value=None,
                         step=0.1,
-                        help=f"Enter {benchmark_labels[metric]} benchmark value",
-                        placeholder=f"e.g., {examples[metric]}"
+                        help=f"Enter advertiser benchmark value",
+                        placeholder=f"e.g., {examples[metric]}",
+                        key="advertiser_benchmark"
                     )
                     # Update the specific benchmark value
-                    if metric == "CTR": benchmark_ctr = benchmark_value or benchmark_ctr
-                    elif metric == "DPVR": benchmark_dpvr = benchmark_value or benchmark_dpvr
-                    elif metric == "Purchase_Rate": benchmark_pr = benchmark_value or benchmark_pr
-                    elif metric == "Promoted_ROAS": benchmark_promoted = benchmark_value or benchmark_promoted
-                    elif metric == "Total_ROAS": benchmark_total = benchmark_value or benchmark_total
+                    if metric == "CTR": benchmark_ctr = advertiser_benchmark or benchmark_ctr
+                    elif metric == "DPVR": benchmark_dpvr = advertiser_benchmark or benchmark_dpvr
+                    elif metric == "Purchase_Rate": benchmark_pr = advertiser_benchmark or benchmark_pr
+                    elif metric == "Promoted_ROAS": benchmark_promoted = advertiser_benchmark or benchmark_promoted
+                    elif metric == "Total_ROAS": benchmark_total = advertiser_benchmark or benchmark_total
+                
+                with bench_col2:
+                    category_benchmark = st.number_input(
+                        f"Category Benchmark ({units[metric]})",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=None,
+                        step=0.1,
+                        help=f"Enter category benchmark value",
+                        placeholder=f"e.g., {examples[metric]}",
+                        key="category_benchmark"
+                    )
+                    # Update the specific benchmark value
+                    if metric == "CTR": benchmark_ctr_category = category_benchmark or benchmark_ctr_category
+                    elif metric == "DPVR": benchmark_dpvr_category = category_benchmark or benchmark_dpvr_category
+                    elif metric == "Purchase_Rate": benchmark_pr_category = category_benchmark or benchmark_pr_category
+                    elif metric == "Promoted_ROAS": benchmark_promoted_category = category_benchmark or benchmark_promoted_category
+                    elif metric == "Total_ROAS": benchmark_total_category = category_benchmark or benchmark_total_category
+
+                    # Add a color key for the benchmark lines
+                    st.markdown(
+                        """
+                        <div style="display: flex; align-items: center; gap: 24px; margin-top: 8px;">
+                            <span style="display: flex; align-items: center;">
+                                <span style="width: 32px; height: 0; border-top: 4px dotted orange; margin-right: 8px;"></span>
+                                <span style="font-size: 15px;">Advertiser Benchmark</span>
+                            </span>
+                            <span style="display: flex; align-items: center;">
+                                <span style="width: 32px; height: 0; border-top: 4px dashed purple; margin-right: 8px;"></span>
+                                <span style="font-size: 15px;">Category Benchmark</span>
+                            </span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
     
 
 
-    # Add order performance data to chart_df if available
-    if order_performance and "Order_ID" in processed.columns:
-        # Map order performance to creatives
-        creative_to_order = {}
-        for _, row in processed.iterrows():
-            if pd.notna(row.get("Order_ID")) and row.get("Order_ID") != "":
-                creative_id = row.get("Creative_ID") or get_group_key(row.get("Creative", ""))
-                creative_to_order[creative_id] = row["Order_ID"]
-        
-        # Add order performance to chart data
-        chart_df["Order_Performance"] = chart_df["Creative_ID"].map(
-            lambda cid: order_performance.get(creative_to_order.get(cid, ""), {}).get(metric, None)
-        )
-        chart_df["Order_ID"] = chart_df["Creative_ID"].map(
-            lambda cid: creative_to_order.get(cid, "Unknown")
-        )
-    else:
-        chart_df["Order_Performance"] = None
-        chart_df["Order_ID"] = "Unknown"
-
-    # Create figure with secondary y-axis if we have order performance data
-    has_order_data = order_performance and chart_df["Order_Performance"].notna().any()
+    # Create figure
+    has_order_data = False
 
     # Choose display formats depending on metric type
     is_percent_metric = metric in ["CTR", "DPVR", "Purchase_Rate"]
@@ -927,38 +941,33 @@ if uploaded_file is not None:
                 customdata=chart_df[["Impressions", "Purchases"]].values
             ))
         
-        # Add single continuous line overlay for order performance (if enabled)
-        if show_order_line:
-            order_perf_data = chart_df.dropna(subset=["Order_Performance"])
-            if not order_perf_data.empty:
-                # Create a single continuous line that shows each creative's order performance
-                # The line will go up/down based on each creative's corresponding order performance
-                    fig.add_trace(go.Scatter(
-                    x=order_perf_data["Label"],
-                    y=order_perf_data["Order_Performance"],
-                    mode="lines+markers",
-                    name=f"Overall Order {metric}",
-                    line=dict(color="red", width=3, dash="dash"),
-                    marker=dict(color="red", size=6),
-                    hovertemplate=f"<b>This line represents the entire order's performance</b><br>%{{x}}<br>{metric}: {hover_y_template}<br>Order: %{{customdata}}<extra></extra>",
-                    customdata=order_perf_data["Order_ID"],
-                    connectgaps=True
+        # Add benchmark lines if enabled
+        if show_benchmark:
+            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total}
+            benchmark_value = benchmark_values.get(metric)
+            
+            if benchmark_value is not None:
+                fig.add_trace(go.Scatter(
+                    x=chart_df["Label"],
+                    y=[benchmark_value] * len(chart_df),
+                    mode="lines",
+                    name=f"Advertiser Benchmark",
+                    line=dict(color="orange", width=4, dash="dot"),
+                    hovertemplate=f"<b>Advertiser Benchmark {metric}</b><br>Value: %{{y:.4f}}<extra></extra>"
                 ))
-        
-            # Add benchmark line if enabled
-            if show_benchmark:
-                benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total}
-                benchmark_value = benchmark_values.get(metric)
-                
-                if benchmark_value is not None:
-                    fig.add_trace(go.Scatter(
-                        x=chart_df["Label"],
-                        y=[benchmark_value] * len(chart_df),
-                        mode="lines",
-                        name=f"{metric} Benchmark",
-                        line=dict(color="orange", width=4, dash="dot"),
-                        hovertemplate=f"<b>Benchmark {metric}</b><br>Value: %{{y:.4f}}<extra></extra>"
-                    ))
+            
+            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category}
+            benchmark_value_category = benchmark_values_category.get(metric)
+            
+            if benchmark_value_category is not None:
+                fig.add_trace(go.Scatter(
+                    x=chart_df["Label"],
+                    y=[benchmark_value_category] * len(chart_df),
+                    mode="lines",
+                    name=f"Category Benchmark",
+                    line=dict(color="purple", width=4, dash="dashdot"),
+                    hovertemplate=f"<b>Category Benchmark {metric}</b><br>Value: %{{y:.4f}}<extra></extra>"
+                ))
         
         fig.update_layout(
             title="",
@@ -1021,7 +1030,7 @@ if uploaded_file is not None:
             width=bar_width
         )
         
-        # Add benchmark line if enabled (for charts without order performance)
+        # Add benchmark lines if enabled (for charts without order performance)
         if show_benchmark:
             benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total}
             benchmark_value = benchmark_values.get(metric)
@@ -1031,9 +1040,22 @@ if uploaded_file is not None:
                     x=chart_df["Label"],
                     y=[benchmark_value] * len(chart_df),
                     mode="lines",
-                    name=f"{metric} Benchmark",
+                    name=f"Advertiser Benchmark",
                     line=dict(color="orange", width=4, dash="dot"),
-                    hovertemplate=f"<b>Benchmark {metric}</b><br>Value: {hover_y_template}<extra></extra>"
+                    hovertemplate=f"<b>Advertiser Benchmark {metric}</b><br>Value: {hover_y_template}<extra></extra>"
+                ))
+            
+            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category}
+            benchmark_value_category = benchmark_values_category.get(metric)
+            
+            if benchmark_value_category is not None:
+                fig.add_trace(go.Scatter(
+                    x=chart_df["Label"],
+                    y=[benchmark_value_category] * len(chart_df),
+                    mode="lines",
+                    name=f"Category Benchmark",
+                    line=dict(color="purple", width=4, dash="dashdot"),
+                    hovertemplate=f"<b>Category Benchmark {metric}</b><br>Value: {hover_y_template}<extra></extra>"
                 ))
     
 
