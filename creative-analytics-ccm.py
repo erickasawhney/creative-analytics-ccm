@@ -21,7 +21,7 @@ st.markdown(
     """
 How to use:
 
-1. Download Amazon DSP report (click 'select all' so all columns are included in report)
+1. Download Amazon DSP report [here](https://advertising.amazon.com/dsp/ENTITYA6I16E0BHHHY/report/custom-report/new) (click 'select all' so all columns are included in report)
 2. Download creative images (JPGs) and name them by creative identifier (Recommend all same size)
 4. Upload the report and images below
 5. Select filters
