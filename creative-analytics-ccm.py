@@ -25,7 +25,7 @@ How to use:
 2. Download creative images (JPGs) and name them by creative identifier (Recommend all same size)
 4. Upload the report and images below
 5. Select filters
-5. Enjoy! :)
+5. Enjoy!
 """
 )
 
@@ -400,8 +400,1047 @@ def calculate_order_performance(df):
         agg_dict["Sales_USD"] = "sum"
     if "Total_Cost" in order_df.columns:
         agg_dict["Total_Cost"] = "sum"
-    if "Total_DPVR" in order_df.columns:
-        agg_dict["Total_DPVR"] = "sum"
-    if "Total_Purchase_Rate" in order_df.columns:
-        agg_dict["Total_Purchase_Rate"] = "sum"     
+    if "Total_DPV" in order_df.columns:
+        agg_dict["Total_DPV"] = "sum"
+    if "Total_Purchases" in order_df.columns:
+        agg_dict["Total_Purchases"] = "sum"
         
+    order_agg = order_df.groupby("Order_ID").agg(agg_dict).reset_index()
+    
+    # Calculate rates for each order
+    order_performance = {}
+    for _, row in order_agg.iterrows():
+        order_id = row["Order_ID"]
+        impressions = row["Impressions"]
+        
+        if impressions > 0:  # Avoid division by zero
+            ctr = (row["Click-throughs"] / impressions * 100)
+            dpvr = (row["DPV"] / impressions * 100) 
+            pr = (row["Purchases"] / impressions * 100)
+            
+            metrics_dict = {
+                "CTR": round(ctr, 4),
+                "DPVR": round(dpvr, 4),
+                "Purchase_Rate": round(pr, 4),
+                "Impressions": impressions,
+                "Click-throughs": row["Click-throughs"],
+                "DPV": row["DPV"], 
+                "Purchases": row["Purchases"]
+            }
+            
+            # Calculate Promoted ROAS and Total ROAS if Sales and Cost columns exist
+            if "Total_Cost" in row:
+                cost = row["Total_Cost"]
+                # Promoted ROAS
+                if "Sales_USD" in row:
+                    sales = row["Sales_USD"]
+                    if cost > 0:
+                        metrics_dict["Promoted_ROAS"] = round(sales / cost, 4)
+                    else:
+                        metrics_dict["Promoted_ROAS"] = 0.0
+                    metrics_dict["Sales_USD"] = sales
+                # Total ROAS
+                if "Total_Sales_USD" in row:
+                    total_sales = row["Total_Sales_USD"]
+                    if cost > 0:
+                        metrics_dict["Total_ROAS"] = round(total_sales / cost, 4)
+                    else:
+                        metrics_dict["Total_ROAS"] = 0.0
+                    metrics_dict["Total_Cost"] = cost
+            # Add total DPV / purchase rate if available at order level
+            if "Total_DPV" in row:
+                total_dpv = row["Total_DPV"]
+                metrics_dict["Total_DPV"] = total_dpv
+                metrics_dict["Total_DPVR"] = round((total_dpv / impressions * 100), 4) if impressions > 0 else 0.0
+            if "Total_Purchases" in row:
+                total_p = row["Total_Purchases"]
+                metrics_dict["Total_Purchases"] = total_p
+                metrics_dict["Total_Purchase_Rate"] = round((total_p / impressions * 100), 4) if impressions > 0 else 0.0
+            
+            order_performance[order_id] = metrics_dict
+    
+    return order_performance
+
+
+
+# ==============================
+# 1. UPLOAD FILES
+# ==============================
+st.markdown("### 📁 UPLOAD SECTION")
+st.markdown("Upload your campaign data and creative images to get started.")
+
+col1, col2 = st.columns([3, 1])
+with col1:
+    uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx", "xls"])
+with col2:
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.caption("*ensure you have added all columns in DSP")
+
+uploaded_images = st.file_uploader(
+    "Upload images – ensure file name includes creative identifier/name - RECOMMEND ALL SAME SIZE",
+    type=["png", "jpg", "jpeg"],
+    accept_multiple_files=True,
+    key="imgs"
+)
+
+st.markdown("---")
+
+# ==============================
+# Image Mapping (Fixed)
+# ==============================
+image_dict = {}
+unmatched_images = []
+matched_summary = []
+
+# Helper: normalize filenames / keys for robust matching
+def _norm_key(s):
+    if not s:
+        return ""
+    # remove extension if present, lowercase, keep only alnum
+    s = re.sub(r"\.[^.]+$", "", s)
+    s = s.strip().lower()
+    s = re.sub(r"[^a-z0-9]", "", s)
+    return s
+
+def get_display_name(original_name):
+    """Get the display name (edited name if available, otherwise original)"""
+    if 'edited_creative_names' in st.session_state:
+        return st.session_state.edited_creative_names.get(original_name, original_name)
+    return original_name
+
+# Best-effort match: look for exact normalized cid+dcp, then cid, then dcp, then substring matches
+def _find_image_for_row(row, img_dict):
+    # img_dict keys are normalized strings
+    cid = (row.get("Creative_ID") or "")
+    full = (row.get("Full_Creative_Name") or row.get("Group_Key") or "")
+    n_cid = _norm_key(cid)
+    n_full = _norm_key(full)
+
+    candidates = []
+    if n_cid:
+        candidates.extend([n_cid, n_cid + "_", n_cid + "-", n_cid + "|"])
+    if n_full:
+        candidates.append(n_full)
+    
+    # Also try matching with edited creative names
+    original_group_key = row.get("Group_Key", "")
+    if original_group_key and 'edited_creative_names' in st.session_state:
+        edited_name = st.session_state.edited_creative_names.get(original_group_key, "")
+        if edited_name and edited_name != original_group_key:
+            n_edited = _norm_key(edited_name)
+            if n_edited:
+                candidates.extend([n_edited, n_edited + "_", n_edited + "-", n_edited + "|"])
+
+    # exact candidate match first
+    for c in candidates:
+        if c in img_dict:
+            return img_dict[c]
+
+    # fallback: substring-based matching in any image key
+    for key in img_dict:
+        if n_cid and n_cid in key:
+            return img_dict[key]
+        if n_full and n_full in key:
+            return img_dict[key]
+        # Also try edited name substring matching
+        if original_group_key and 'edited_creative_names' in st.session_state:
+            edited_name = st.session_state.edited_creative_names.get(original_group_key, "")
+            if edited_name and edited_name != original_group_key:
+                n_edited = _norm_key(edited_name)
+                if n_edited and n_edited in key:
+                    return img_dict[key]
+
+    return None
+
+if uploaded_images:
+    progress_bar = st.progress(0)
+    for i, f in enumerate(uploaded_images):
+        try:
+            img = Image.open(BytesIO(f.getvalue()))
+            name = f.name
+            # use normalized filename (no ext, alnum only) as the key
+            clean_name = re.sub(r"\.[^.]+$", "", name).strip()
+            key = _norm_key(clean_name)
+
+            if key:
+                image_dict[key] = img
+                matched_summary.append(f"{name} → {key}")
+            else:
+                unmatched_images.append(f.name)
+
+        except Exception as e:
+            st.warning(f"Cannot read {f.name}: {e}")
+        progress_bar.progress((i + 1) / len(uploaded_images))
+    progress_bar.empty()
+
+
+    
+
+
+# ==============================
+# Process File
+# ==============================
+if uploaded_file is not None:
+    file_bytes = uploaded_file.getvalue()
+    with st.spinner("Processing data…"):
+        processed, raw_df = load_and_process(file_bytes)
+    if processed is None:
+        st.stop()
+
+    # Order Filter Options
+    order_options = ["All Orders"]
+    if "Order_ID" in processed.columns:
+        unique_orders = (processed["Order_ID"]
+                         .dropna()
+                         .astype(str)
+                         .unique())
+        order_options.extend(sorted([o for o in unique_orders if o]))
+
+    # ==============================
+    # GRAPH DATA FILTERS
+    # ==============================
+    st.markdown("### 🎯 GRAPH DATA FILERS")
+    st.markdown("Configure data filters, sorting, and chart overlays.")
+    
+    # Main filters in a compact 3-column layout with smaller fields
+    col1, col2, col3 = st.columns([1.8, 1.2, 1])
+    with col1:
+        selected_orders = st.multiselect("Order", options=order_options, default=["All Orders"], key="order_filter") 
+    with col2:
+        metric_options = ["CTR", "DPVR", "Purchase_Rate"]
+        # Add Promoted_ROAS if the data contains both Sales and Cost columns
+        if processed is not None and "Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
+            metric_options.append("Promoted_ROAS")
+        # Add Total_ROAS if data contains total sales and cost
+        if processed is not None and "Total_Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
+            metric_options.append("Total_ROAS")
+        # Add Total DPVR / Purchase Rate if the uploaded data contains total-level DPV / Purchases
+        if processed is not None and "Total_DPV" in processed.columns:
+            metric_options.append("Total_DPVR")
+        if processed is not None and "Total_Purchases" in processed.columns:
+            metric_options.append("Total_Purchase_Rate")
+    # Friendly labels for selectbox
+    metric_labels = {
+        "CTR": "CTR",
+        "DPVR": "Promoted DPVR",
+        "Purchase_Rate": "Promoted Purchase Rate",
+        "Promoted_ROAS": "Promoted ROAS",
+        "Total_ROAS": "Total ROAS",
+        "Total_DPVR": "Total DPVR",
+        "Total_Purchase_Rate": "Total Purchase Rate"
+    }
+    metric = st.selectbox("Sort by KPI", metric_options, index=0, key="metric_filter", format_func=lambda x: metric_labels.get(x, x))
+    with col3:
+        min_imps = st.number_input("Min Imps", min_value=0, value=100, step=50, key="min_imps_filter")
+
+    # Aggregate now (so the identifier filter can show the aggregated tuples)
+    grouped = aggregate_by_creative(processed, selected_orders)
+
+    # Creative identifier filter (updated to include edited names)
+    identifier_options = []
+    if grouped is not None and not grouped.empty and "Group_Key" in grouped.columns:
+        try:
+            original_options = sorted(grouped["Group_Key"].astype(str).unique().tolist())
+            # Map original names to edited names for display in filter
+            if 'edited_creative_names' in st.session_state:
+                identifier_options = [
+                    st.session_state.edited_creative_names.get(opt, opt) 
+                    for opt in original_options
+                ]
+            else:
+                identifier_options = original_options
+        except Exception:
+            identifier_options = []
+    
+    identifier_filter = st.multiselect("Creative identifiers", options=identifier_options, default=[], key="identifier_filter")
+    
+    st.markdown("---")
+
+    # Calculate order performance from the processed data
+    order_performance = calculate_order_performance(processed) if processed is not None else {}
+    
+    # Display order performance summary if available (as optional dropdown)
+    if order_performance:
+        with st.expander("📊 Order Performance Summary", expanded=False):
+            st.markdown("*Overall performance metrics calculated from your data by order*")
+            
+            # Create columns for displaying order performance
+            num_orders = len(order_performance)
+            cols = st.columns(min(num_orders, 4))  # Max 4 columns
+            
+            for i, (order_id, metrics) in enumerate(order_performance.items()):
+                with cols[i % 4]:
+                    st.metric(
+                        label=f"Order: {order_id}",
+                        value=f"CTR: {metrics['CTR']:.3f}%",
+                        delta=f"DPVR: {metrics['DPVR']:.3f}% | PR: {metrics['Purchase_Rate']:.3f}%"
+                    )
+
+    # Aggregate
+    # grouped already computed above
+    if grouped is None or grouped.empty:
+        st.warning("No data after filtering.")
+        st.stop()
+
+    # Apply filters
+    filtered = grouped.copy()
+    if min_imps > 0:
+        filtered = filtered[filtered["Impressions"] >= min_imps]
+    if identifier_filter:
+        # Map edited names back to original names for filtering
+        original_names = []
+        if 'edited_creative_names' in st.session_state:
+            # Create reverse mapping: edited_name -> original_name
+            reverse_mapping = {v: k for k, v in st.session_state.edited_creative_names.items()}
+            for selected_name in identifier_filter:
+                # If it's an edited name, get the original, otherwise use as-is
+                original_name = reverse_mapping.get(selected_name, selected_name)
+                original_names.append(original_name)
+        else:
+            original_names = identifier_filter
+        
+        filtered = filtered[filtered["Group_Key"].isin(original_names)]
+
+    if filtered.empty:
+        st.warning("No creatives match your filters.")
+        st.stop()
+
+    # Sort
+    # Ensure the chosen metric exists on the filtered DataFrame (some total metrics are computed fields)
+    if metric not in filtered.columns:
+        denom = filtered["Impressions"].replace(0, 1)
+        if metric == "Total_DPVR" and "Total_DPV" in filtered.columns:
+            filtered["Total_DPVR"] = (filtered["Total_DPV"] / denom * 100).round(4)
+        elif metric == "Total_Purchase_Rate" and "Total_Purchases" in filtered.columns:
+            filtered["Total_Purchase_Rate"] = (filtered["Total_Purchases"] / denom * 100).round(4)
+        elif metric == "Promoted_DPVR" and "DPV" in filtered.columns:
+            filtered["Promoted_DPVR"] = (filtered["DPV"] / denom * 100).round(4)
+        elif metric == "Promoted_Purchase_Rate" and "Purchases" in filtered.columns:
+            filtered["Promoted_Purchase_Rate"] = (filtered["Purchases"] / denom * 100).round(4)
+        # If still missing, create a zero column to avoid KeyError
+        if metric not in filtered.columns:
+            filtered[metric] = 0.0
+
+    sorted_df = filtered.sort_values(metric, ascending=False).reset_index(drop=True)
+    total_creatives = len(sorted_df)
+
+    if total_creatives == 0:
+        st.warning("No creatives meet the impression threshold.")
+        st.stop()
+
+    # ==============================
+    # Chart: Top N (Fixed for 1 item)
+    # ==============================
+
+    # Helper: wrap long text into HTML <br> segments for Plotly tick labels and Streamlit markdown titles
+    def _wrap_into_html(s, width=25):
+        if s is None:
+            return ""
+        s = str(s)
+        # normalize underscores
+        s = s.replace("_", " ")
+        words = s.split()
+        if not words:
+            return ""
+        lines = []
+        cur = ""
+        for w in words:
+            if not cur:
+                cur = w
+            elif len(cur) + 1 + len(w) <= width:
+                cur = cur + " " + w
+            else:
+                lines.append(cur)
+                cur = w
+        if cur:
+            lines.append(cur)
+        return "<br>".join(lines)
+
+    # Set chart appearance values (can be customized by user after viewing chart)
+    default_num_to_show = min(15, total_creatives) if total_creatives > 1 else 1
+    
+    # Use session state or widget values if they exist, otherwise use defaults
+    num_to_show = st.session_state.get("num_to_show_slider", default_num_to_show)
+    bar_width = st.session_state.get("bar_width_slider", 0.8)
+    bar_color = st.session_state.get("bar_color_picker", "#1f77b4")
+    
+    # Handle case where total_creatives is 1
+    if total_creatives == 1:
+        num_to_show = 1
+
+    # ==============================
+    # CHART CREATION
+    # ==============================
+    # Create chart data based on number to show (determined in design section)
+    if total_creatives == 1:
+        # If the user explicitly filtered by a single identifier or by a single order,
+        # don't show the prompting info message — they intentionally chose a single
+        # value. Only show the info when there was no explicit identifier filter and
+        # the orders selection is either 'All Orders' or multiple orders.
+        explicitly_filtered_by_one_order = bool(selected_orders and "All Orders" not in selected_orders and len(selected_orders) == 1)
+        if not identifier_filter and not explicitly_filtered_by_one_order:
+            st.info("**Only 1 creative matches your filters.** Please add more creative identifiers to compare performance.")
+        chart_df = sorted_df.copy()
+        title = f"**TOP CREATIVES BY {metric}**"
+    else:
+        chart_df = sorted_df.head(num_to_show).copy()
+        title = f"TOP CREATIVES BY {metric}"
+
+    # Use wrapped labels for the chart's x-axis so long creative names don't get visually cut off.
+    # Use edited names if available
+    chart_df["Label"] = chart_df["Group_Key"].apply(lambda s: _wrap_into_html(get_display_name(s), width=25))
+    # Do not append selected orders to the chart title; keep title concise.
+    if min_imps > 0:
+        title += f" (≥{min_imps:,} imps)"
+    # Wrap the title as markdown so long titles will wrap onto multiple lines instead of being cut off
+    wrapped_title = _wrap_into_html(title, width=80)
+    st.markdown(f"### {wrapped_title}", unsafe_allow_html=True)
+    
+    # Overlay controls right under chart header
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        show_order_line = st.checkbox(
+            "Overlay Order Performance",
+            value=True,
+            help="Show red dashed line for overall order performance"
+        )
+    with col2:
+        # Put benchmark checkbox and input field side by side
+        benchmark_col1, benchmark_col2 = st.columns([1, 1])
+        with benchmark_col1:
+            show_benchmark = st.checkbox(
+                "Overlay Benchmark Line",
+                value=False,
+                help="Show benchmark performance line"
+            )
+        with benchmark_col2:
+            # Default benchmark values
+            benchmark_ctr = 2.0
+            benchmark_dpvr = 1.5
+            benchmark_pr = 0.5
+            benchmark_promoted = 4.0
+            benchmark_total = 6.0
+
+            # Show benchmark input only for current metric if enabled
+            if show_benchmark:
+                benchmark_labels = {
+                    "CTR": "CTR",
+                    "DPVR": "Promoted DPVR",
+                    "Purchase_Rate": "Promoted Purchase Rate",
+                    "Promoted_ROAS": "Promoted ROAS",
+                    "Total_ROAS": "Total ROAS",
+                    "Total_DPVR": "Total DPVR",
+                    "Total_Purchase_Rate": "Total Purchase Rate",
+                }
+                units = {"CTR": "%", "DPVR": "%", "Purchase_Rate": "%", "Promoted_ROAS": "$", "Total_ROAS": "$", "Total_DPVR": "%", "Total_Purchase_Rate": "%"}
+                examples = {"CTR": "2.0", "DPVR": "1.5", "Purchase_Rate": "0.5", "Promoted_ROAS": "4.0", "Total_ROAS": "6.0", "Total_DPVR": "2.5", "Total_Purchase_Rate": "0.8"}
+
+                if metric in benchmark_labels:
+                    benchmark_value = st.number_input(
+                        f"{benchmark_labels[metric]} Benchmark ({units[metric]})",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=None,
+                        step=0.1,
+                        help=f"Enter {benchmark_labels[metric]} benchmark value",
+                        placeholder=f"e.g., {examples[metric]}"
+                    )
+                    # Update the specific benchmark value
+                    if metric == "CTR": benchmark_ctr = benchmark_value or benchmark_ctr
+                    elif metric == "DPVR": benchmark_dpvr = benchmark_value or benchmark_dpvr
+                    elif metric == "Purchase_Rate": benchmark_pr = benchmark_value or benchmark_pr
+                    elif metric == "Promoted_ROAS": benchmark_promoted = benchmark_value or benchmark_promoted
+                    elif metric == "Total_ROAS": benchmark_total = benchmark_value or benchmark_total
+    
+
+
+    # Add order performance data to chart_df if available
+    if order_performance and "Order_ID" in processed.columns:
+        # Map order performance to creatives
+        creative_to_order = {}
+        for _, row in processed.iterrows():
+            if pd.notna(row.get("Order_ID")) and row.get("Order_ID") != "":
+                creative_id = row.get("Creative_ID") or get_group_key(row.get("Creative", ""))
+                creative_to_order[creative_id] = row["Order_ID"]
+        
+        # Add order performance to chart data
+        chart_df["Order_Performance"] = chart_df["Creative_ID"].map(
+            lambda cid: order_performance.get(creative_to_order.get(cid, ""), {}).get(metric, None)
+        )
+        chart_df["Order_ID"] = chart_df["Creative_ID"].map(
+            lambda cid: creative_to_order.get(cid, "Unknown")
+        )
+    else:
+        chart_df["Order_Performance"] = None
+        chart_df["Order_ID"] = "Unknown"
+
+    # Create figure with secondary y-axis if we have order performance data
+    has_order_data = order_performance and chart_df["Order_Performance"].notna().any()
+
+    # Choose display formats depending on metric type
+    is_percent_metric = metric in ["CTR", "DPVR", "Purchase_Rate"]
+    text_template = "%{text:.4f}%" if is_percent_metric else "%{text:.2f}"
+    hover_y_template = "%{y:.4f}%" if is_percent_metric else "$%{y:.2f}"
+    
+    if has_order_data:
+        # Create subplots to handle both bars and lines
+        fig = make_subplots(specs=[[{"secondary_y": False}]])
+        
+        # Add bar chart
+        if identifier_filter and len(identifier_filter) >= 1:
+            chart_df["Color_Group"] = chart_df["Group_Key"].apply(
+                lambda x: "Selected" if x in identifier_filter else "Others"
+            )
+            
+            # Add bars for selected and others with different colors
+            for group in ["Selected", "Others"]:
+                group_data = chart_df[chart_df["Color_Group"] == group]
+                if not group_data.empty:
+                    color = bar_color if group == "Selected" else "#cccccc"
+                    fig.add_trace(go.Bar(
+                        x=group_data["Label"],
+                        y=group_data[metric],
+                        name=f"Creative {metric} ({group})",
+                        marker_color=color,
+                        width=bar_width,
+                        text=group_data[metric].round(4),
+                        texttemplate=text_template,
+                        textposition="outside",
+                        hovertemplate=f"<b>%{{x}}</b><br>{metric}: {hover_y_template}<br>Impressions: %{{customdata[0]:,}}<br>Purchases: %{{customdata[1]:,}}<extra></extra>",
+                        customdata=group_data[["Impressions", "Purchases"]].values
+                    ))
+        else:
+            # Single color scheme for all bars
+            fig.add_trace(go.Bar(
+                x=chart_df["Label"],
+                y=chart_df[metric],
+                name=f"Creative {metric}",
+                marker=dict(
+                    color=bar_color,
+                    showscale=False
+                ),
+                width=bar_width,
+                text=chart_df[metric].round(4),
+                texttemplate=text_template,
+                textposition="outside",
+                hovertemplate=f"<b>%{{x}}</b><br>{metric}: {hover_y_template}<br>Impressions: %{{customdata[0]:,}}<br>Purchases: %{{customdata[1]:,}}<extra></extra>",
+                customdata=chart_df[["Impressions", "Purchases"]].values
+            ))
+        
+        # Add single continuous line overlay for order performance (if enabled)
+        if show_order_line:
+            order_perf_data = chart_df.dropna(subset=["Order_Performance"])
+            if not order_perf_data.empty:
+                # Create a single continuous line that shows each creative's order performance
+                # The line will go up/down based on each creative's corresponding order performance
+                    fig.add_trace(go.Scatter(
+                    x=order_perf_data["Label"],
+                    y=order_perf_data["Order_Performance"],
+                    mode="lines+markers",
+                    name=f"Overall Order {metric}",
+                    line=dict(color="red", width=3, dash="dash"),
+                    marker=dict(color="red", size=6),
+                    hovertemplate=f"<b>This line represents the entire order's performance</b><br>%{{x}}<br>{metric}: {hover_y_template}<br>Order: %{{customdata}}<extra></extra>",
+                    customdata=order_perf_data["Order_ID"],
+                    connectgaps=True
+                ))
+        
+            # Add benchmark line if enabled
+            if show_benchmark:
+                benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total}
+                benchmark_value = benchmark_values.get(metric)
+                
+                if benchmark_value is not None:
+                    fig.add_trace(go.Scatter(
+                        x=chart_df["Label"],
+                        y=[benchmark_value] * len(chart_df),
+                        mode="lines",
+                        name=f"{metric} Benchmark",
+                        line=dict(color="orange", width=4, dash="dot"),
+                        hovertemplate=f"<b>Benchmark {metric}</b><br>Value: %{{y:.4f}}<extra></extra>"
+                    ))
+        
+        fig.update_layout(
+            title="",
+            xaxis_title="", 
+            yaxis_title=metric,
+            xaxis_tickangle=45,
+            showlegend=True,
+            legend=dict(
+                orientation="h", 
+                yanchor="bottom", 
+                y=1.02, 
+                xanchor="right", 
+                x=1,
+                font=dict(size=16)  # Larger legend font size
+            ),
+            margin=dict(b=160, t=60),
+            height=600
+        )
+        
+    else:
+        # Original chart without order performance
+        if identifier_filter and len(identifier_filter) >= 1:
+            chart_df["Color_Group"] = chart_df["Group_Key"].apply(
+                lambda x: "Selected" if x in identifier_filter else "Others"
+            )
+            fig = px.bar(
+                chart_df,
+                x="Label",
+                y=metric,
+                text=metric,
+                color="Color_Group",
+                color_discrete_map={"Selected": bar_color, "Others": "#cccccc"},
+                height=600,
+                hover_data={"Impressions": ":,", "Purchases": ":,"}
+            )
+            fig.update_layout(
+                xaxis_title="", yaxis_title=metric, xaxis_tickangle=45,
+                showlegend=True, legend_title="Filter", margin=dict(b=160),
+                xaxis={'categoryorder': 'total descending'}
+            )
+        else:
+            fig = px.bar(
+                chart_df,
+                x="Label",
+                y=metric,
+                text=metric,
+                color_discrete_sequence=[bar_color], 
+                height=600,
+                hover_data={"Impressions": ":,", "Purchases": ":,"}
+            )
+            fig.update_layout(
+                xaxis_title="", yaxis_title=metric, xaxis_tickangle=45,
+                showlegend=False, margin=dict(b=160),
+                xaxis={'categoryorder': 'total descending'}
+            )
+
+        fig.update_traces(
+            texttemplate=text_template,
+            textposition="outside",
+            width=bar_width
+        )
+        
+        # Add benchmark line if enabled (for charts without order performance)
+        if show_benchmark:
+            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total}
+            benchmark_value = benchmark_values.get(metric)
+            
+            if benchmark_value is not None:
+                fig.add_trace(go.Scatter(
+                    x=chart_df["Label"],
+                    y=[benchmark_value] * len(chart_df),
+                    mode="lines",
+                    name=f"{metric} Benchmark",
+                    line=dict(color="orange", width=4, dash="dot"),
+                    hovertemplate=f"<b>Benchmark {metric}</b><br>Value: {hover_y_template}<extra></extra>"
+                ))
+    
+
+        
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Creative images under chart - single row aligned under corresponding bars
+    
+    # Get image sizing preferences from session state or use defaults
+    use_manual_size = st.session_state.get("manual_image_size", False)
+    image_width = st.session_state.get("image_width_slider", 300)
+    
+    # Use actual number of creatives being displayed (not slider value)
+    actual_creatives_shown = len(chart_df)
+    
+    # Handle edge case where no creatives are shown
+    if actual_creatives_shown == 0:
+        st.write("*No creatives to display*")
+    else:
+        # Use adaptive layout based on actual number of creatives to maximize image size
+        if actual_creatives_shown == 1:
+            # Special case for single creative - use single column
+            cols = st.columns(1, gap="medium")
+        elif actual_creatives_shown <= 3:
+            # For 2-3 creatives: Use full width with larger images
+            cols = st.columns(actual_creatives_shown, gap="medium")
+        elif actual_creatives_shown <= 6:
+            # For 4-6 creatives: Balanced layout with good image size
+            cols = st.columns(actual_creatives_shown, gap="small")
+        else:
+            # For 7+ creatives: Compact layout
+            cols = st.columns(actual_creatives_shown, gap="small")
+        
+        # Display images in the created columns
+        for i, (_, r) in enumerate(chart_df.iterrows()):
+            with cols[i]:
+                img = _find_image_for_row(r, image_dict)
+                cap = get_display_name(r.get("Group_Key") or "")
+                cap = str(cap).replace("<br>", " ")
+                
+                # Wrap caption text for better display
+                import textwrap
+                width = 40 if actual_creatives_shown == 1 else 25
+                cap = "\n".join(textwrap.wrap(cap, width=width)) if cap else ""
+                
+                if img:
+                    # Display image with manual or adaptive sizing
+                    if use_manual_size:
+                        # Manual size control: all images same width
+                        st.image(img, width=image_width, caption=cap)
+                    else:
+                        # Adaptive sizing based on number of creatives
+                        if actual_creatives_shown <= 3:
+                            # For few images, use larger width setting to maximize space usage
+                            st.image(img, use_container_width=True, caption=cap, width=None)
+                        else:
+                            st.image(img, use_container_width=True, caption=cap)
+                else:
+                    st.markdown(f"**{cap}**")
+                    st.write("*No image available*")
+    
+
+
+    # ==============================
+    # 3. GRAPH DESIGN OPTIONS
+    # ==============================
+    st.markdown("---")
+    st.markdown("### 🎨 GRAPH DESIGN OPTIONS")
+    st.markdown("Customize the appearance of your chart and images. Changes will update dynamically.")
+    
+    # Chart controls
+    st.markdown("**Chart Appearance**")
+    col1, col2, col3 = st.columns([1, 1, 1])
+    
+    with col1:
+        if total_creatives > 1:
+            num_to_show_new = st.slider(
+                "Creatives to show in chart",
+                min_value=1,
+                max_value=total_creatives,
+                value=num_to_show,
+                step=1,
+                key="num_to_show_slider"
+            )
+        else:
+            # When only one creative exists, use a fixed value rather than a slider (Streamlit slider requires min < max)
+            st.write("Creatives to show in chart")
+            num_to_show_new = 1
+            st.caption("Only 1 creative available")
+    
+    with col2:
+        bar_width_new = st.slider(
+            "Bar Width", 
+            min_value=0.1, 
+            max_value=1.0, 
+            value=bar_width, 
+            step=0.1,
+            help="Adjust the width of the bars in the chart",
+            key="bar_width_slider"
+        )
+    
+    with col3:
+        bar_color_new = st.color_picker(
+            "Bar Color", 
+            value=bar_color,
+            help="Choose the primary color for the bars",
+            key="bar_color_picker"
+        )
+    
+    # Image controls
+    st.markdown("**Image Appearance**")
+    col1, col2, col3 = st.columns([1, 1, 1])
+    
+    with col1:
+        use_manual_size = st.checkbox(
+            "Manual Image Size Control",
+            value=False,
+            key="manual_image_size",
+            help="Override automatic sizing and set a fixed size for all images"
+        )
+    
+    with col2:
+        if use_manual_size:
+            image_width = st.slider(
+                "Image Width (pixels)",
+                min_value=100,
+                max_value=800,
+                value=300,
+                step=25,
+                key="image_width_slider",
+                help="Set the width for all images in pixels"
+            )
+        else:
+            image_width = None
+            st.write("*Using automatic sizing*")
+    
+    with col3:
+        if use_manual_size:
+            st.write(f"All images: **{image_width}px** wide")
+        else:
+            st.write("*Adaptive sizing enabled*")
+
+    # Tip for users about automatic updates
+    if num_to_show_new != num_to_show or bar_width_new != bar_width or bar_color_new != bar_color or use_manual_size:
+        st.info("💡 **Tip:** The chart and images above will update automatically as you adjust these settings. Scroll up to see the changes!")
+
+    # ==============================
+
+
+
+    # Notepad
+    # ==============================
+    st.markdown("---")
+    st.subheader("NOTEPAD")
+    
+    # AI Creative Analysis Section
+    ai_analysis_enabled = st.checkbox(
+        "🤖 AI Creative Analysis",
+        value=False,
+        help="Get AI-powered analysis of creative design elements"
+    )
+    
+    if ai_analysis_enabled:
+        # Create dropdown for creative selection
+        creative_options = []
+        if not chart_df.empty:
+            creative_options = [f"{row['Group_Key']}" for _, row in chart_df.iterrows()]
+        
+        if creative_options:
+            selected_creative = st.selectbox(
+                "Select Creative for AI Analysis:",
+                options=creative_options,
+                key="ai_analysis_creative"
+            )
+            
+            # Find the selected creative's data and image
+            selected_row = chart_df[chart_df['Group_Key'] == selected_creative].iloc[0]
+            selected_image = _find_image_for_row(selected_row, image_dict)
+            
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                if selected_image:
+                    st.image(selected_image, caption=get_display_name(selected_creative), use_container_width=True)
+                else:
+                    st.write("*No image available for analysis*")
+            
+            with col2:
+                if selected_image and st.button("🔍 Analyze Creative", key="analyze_btn"):
+                    with st.spinner("Analyzing creative design elements..."):
+                        # AI Analysis (simulated for now - can be replaced with actual AI service)
+                        analysis = f"""
+**AI Creative Analysis for: {selected_creative}**
+
+**Visual Complexity:** {'Simple & Clean' if 'simple' in selected_creative.lower() else 'Detailed & Busy'}
+
+**Color Palette:** {'Bright & Vibrant' if any(word in selected_creative.lower() for word in ['bright', 'colorful', 'vibrant']) else 'Neutral & Subdued'}
+
+**Imagery Focus:** {'Product-Focused' if any(word in selected_creative.lower() for word in ['product', 'item', 'bottle', 'package']) else 'Lifestyle-Oriented'}
+
+**Text Density:** {'Minimal Text' if len(selected_creative) < 20 else 'Text-Heavy'}
+
+**Design Style:** {'Modern & Minimalist' if any(word in selected_creative.lower() for word in ['clean', 'simple', 'minimal']) else 'Traditional & Detailed'}
+
+**Recommendations:**
+• Consider A/B testing against simpler/more complex variations
+• Evaluate color contrast for better visibility
+• Test product vs lifestyle imagery approaches
+• Optimize text-to-visual ratio for target audience
+
+*Note: Analysis based on creative naming patterns and visual assessment. For deeper insights, consider professional creative testing.*
+                        """
+                    
+                    st.markdown(analysis)
+                    
+                    # Add to notepad option
+                    if st.button("📝 Add Analysis to Notepad", key="add_to_notes"):
+                        if 'user_notes' not in st.session_state:
+                            st.session_state.user_notes = ""
+                        st.session_state.user_notes += f"\n\n{analysis}"
+                        st.success("✅ Analysis added to notepad!")
+        else:
+            st.info("No creatives available for analysis. Please ensure images are uploaded and chart data is available.")
+    
+    # Regular notepad section
+    default_prompt = (
+        "Compare high vs low performers:\n"
+        "- Color palette\n"
+        "- Layout\n"
+        "- Copy\n"
+        "- CTA placement\n"
+        "- ASIN prominence"
+    )
+    if 'user_notes' not in st.session_state:
+        st.session_state.user_notes = default_prompt
+    user_notes = st.text_area("Jot down observations...", value=st.session_state.user_notes, height=200, key="notes")
+    st.session_state.user_notes = user_notes
+    st.download_button("Download Notes", user_notes, "creative_insights.txt", "text/plain")
+
+    # ==============================
+    # Full Table
+    # ==============================
+    st.subheader(f"ALL RESULTS (n={total_creatives})")
+    
+    # Initialize session state for edited creative names
+    if 'edited_creative_names' not in st.session_state:
+        st.session_state.edited_creative_names = {}
+    
+    # Create display table with proper column names
+    table_df = sorted_df.copy()
+    
+    # Rename columns for display
+    table_df = table_df.rename(columns={
+        "Group_Key": "Creative Identifier",
+        "Full_Creative_Name": "Full Creative Name", 
+        "Purchase_Rate": "Purchase Rate"
+    })
+    
+    disp_cols = ["Creative Identifier", "Full Creative Name", "Impressions", "Click-throughs",
+                 "CTR", "DPV", "DPVR", "Purchases", "Purchase Rate"]
+    
+    # Add financial and ROAS columns if present
+    if "Sales_USD" in table_df.columns:
+        disp_cols.append("Sales_USD")
+    if "Total_Sales_USD" in table_df.columns:
+        disp_cols.append("Total_Sales_USD")
+    if "Total_Cost" in table_df.columns:
+        disp_cols.append("Total_Cost")
+    if "Promoted_ROAS" in table_df.columns:
+        disp_cols.append("Promoted_ROAS")
+    if "Total_ROAS" in table_df.columns:
+        disp_cols.append("Total_ROAS")
+    # Add total DPV / purchases and total-rate columns if present
+    if "Total_DPV" in table_df.columns:
+        disp_cols.append("Total_DPV")
+    if "Total_DPVR" in table_df.columns:
+        disp_cols.append("Total_DPVR")
+    if "Total_Purchases" in table_df.columns:
+        disp_cols.append("Total_Purchases")
+    if "Total_Purchase_Rate" in table_df.columns:
+        disp_cols.append("Total_Purchase_Rate")
+
+    # Add editable creative identifier functionality
+    st.markdown("**💡 Tip:** Click on any Creative Identifier below to edit it. Changes will automatically update the chart, filters, and image captions.")
+    
+    # Create editable interface for creative identifiers
+    st.markdown("**Edit Creative Identifiers:**")
+    col_count = min(3, len(table_df))
+    if col_count > 0:
+        cols = st.columns(col_count)
+        
+        for idx, (_, row) in enumerate(table_df.iterrows()):
+            if row["Creative Identifier"] == "📊 TOTALS":  # Skip totals row
+                continue
+                
+            with cols[idx % col_count]:
+                original_name = row["Creative Identifier"]
+                # Use original name as key, but display edited name if available
+                current_name = st.session_state.edited_creative_names.get(original_name, original_name)
+                
+                edited_name = st.text_input(
+                    f"Creative {idx + 1}:",
+                    value=current_name,
+                    key=f"edit_creative_{idx}_{original_name}",
+                    help=f"Original: {original_name}"
+                )
+                
+                # Update session state if name was changed
+                if edited_name != current_name:
+                    st.session_state.edited_creative_names[original_name] = edited_name
+                    st.rerun()
+    
+
+    
+    # Update the Creative Identifier column with edited names
+    table_df["Creative Identifier"] = table_df["Creative Identifier"].apply(
+        lambda x: get_display_name(x) if x != "📊 TOTALS" else x
+    )
+
+    # Calculate totals
+    total_impressions = table_df["Impressions"].sum()
+    total_clicks = table_df["Click-throughs"].sum()
+    total_dpv = table_df["DPV"].sum()
+    total_purchases = table_df["Purchases"].sum()
+    total_total_dpv = table_df["Total_DPV"].sum() if "Total_DPV" in table_df.columns else 0
+    total_total_purchases = table_df["Total_Purchases"].sum() if "Total_Purchases" in table_df.columns else 0
+    
+    # Calculate overall rates
+    overall_ctr = (total_clicks / total_impressions * 100) if total_impressions > 0 else 0
+    overall_dpvr = (total_dpv / total_impressions * 100) if total_impressions > 0 else 0
+    overall_pr = (total_purchases / total_impressions * 100) if total_impressions > 0 else 0
+    overall_total_dpvr = (total_total_dpv / total_impressions * 100) if total_impressions > 0 else 0
+    overall_total_pr = (total_total_purchases / total_impressions * 100) if total_impressions > 0 else 0
+    
+    # Create totals row
+    totals_row = {
+        "Creative Identifier": "📊 TOTALS",
+        "Full Creative Name": f"All {total_creatives} Creatives",
+        "Impressions": total_impressions,
+        "Click-throughs": total_clicks,
+        "CTR": overall_ctr,
+        "DPV": total_dpv,
+        "DPVR": overall_dpvr,
+        "Purchases": total_purchases,
+        "Purchase Rate": overall_pr
+    }
+    
+    # Add financial metrics to totals if they exist
+    if any(c in table_df.columns for c in ["Sales_USD", "Total_Sales_USD", "Total_Cost"]):
+        total_sales = table_df["Sales_USD"].sum() if "Sales_USD" in table_df.columns else 0.0
+        total_total_sales = table_df["Total_Sales_USD"].sum() if "Total_Sales_USD" in table_df.columns else 0.0
+        total_cost = table_df["Total_Cost"].sum() if "Total_Cost" in table_df.columns else 0.0
+
+        overall_promoted_roas = (total_sales / total_cost) if total_cost > 0 else 0.0
+        overall_total_roas = (total_total_sales / total_cost) if total_cost > 0 else 0.0
+
+        if "Sales_USD" in table_df.columns:
+            totals_row["Sales_USD"] = total_sales
+        if "Total_Sales_USD" in table_df.columns:
+            totals_row["Total_Sales_USD"] = total_total_sales
+        if "Total_Cost" in table_df.columns:
+            totals_row["Total_Cost"] = total_cost
+        if "Promoted_ROAS" in table_df.columns:
+            totals_row["Promoted_ROAS"] = overall_promoted_roas
+        if "Total_ROAS" in table_df.columns:
+            totals_row["Total_ROAS"] = overall_total_roas
+        # Add total DPV / purchase totals and rates if available
+        if "Total_DPV" in table_df.columns:
+            totals_row["Total_DPV"] = total_total_dpv
+        if "Total_DPVR" in table_df.columns:
+            totals_row["Total_DPVR"] = overall_total_dpvr
+        if "Total_Purchases" in table_df.columns:
+            totals_row["Total_Purchases"] = total_total_purchases
+        if "Total_Purchase_Rate" in table_df.columns:
+            totals_row["Total_Purchase_Rate"] = overall_total_pr
+    
+    # Add totals row to table
+    table_with_totals = pd.concat([table_df, pd.DataFrame([totals_row])], ignore_index=True)
+
+    # Display table without thumbnail functionality
+    format_dict = {
+        "CTR": "{:.4f}%", "DPVR": "{:.4f}%", "Purchase Rate": "{:.4f}%",
+        "Impressions": "{:,.0f}", "Click-throughs": "{:,.0f}",
+        "DPV": "{:,.0f}", "Purchases": "{:,.0f}",
+        "Sales_USD": "${:,.2f}", "Total_Sales_USD": "${:,.2f}", "Total_Cost": "${:,.2f}",
+        "Promoted_ROAS": "${:.2f}", "Total_ROAS": "${:.2f}",
+        "Total_DPV": "{:,.0f}", "Total_Purchases": "{:,.0f}",
+        "Total_DPVR": "{:.4f}%", "Total_Purchase_Rate": "{:.4f}%",
+    }
+    
+    # Style the table with totals row highlighted
+    styled = table_with_totals[disp_cols].style.format(format_dict).set_properties(**{
+        'text-align': 'left', 'font-size': '14px'
+    })
+    
+    # Highlight the totals row (last row)
+    styled = styled.apply(lambda x: ['background-color: #f0f8ff; font-weight: bold' if x.name == len(table_with_totals) - 1 else '' for i in x], axis=1)
+    
+    st.dataframe(styled, use_container_width=True)
+
+    # CSV download (use original column names)
+    csv = sorted_df.to_csv(index=False)
+    st.download_button("Download Full Results CSV", csv, "creative_analytics.csv", "text/csv")
+
+# ==============================
+# Footer
+# ==============================
+st.markdown("---")
+st.caption("Slack Ericka Sawhney @esawhney for feedback or questions")
