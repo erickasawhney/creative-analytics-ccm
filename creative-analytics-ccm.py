@@ -25,7 +25,7 @@ How to use:
 2. Download creative images (JPGs) and name them by creative identifier (Recommend all same size)
 4. Upload the report and images below
 5. Select filters
-5. Enjoy!
+5. Enjoy! :)
 """
 )
 
