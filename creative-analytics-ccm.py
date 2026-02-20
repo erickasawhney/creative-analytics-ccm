@@ -283,6 +283,9 @@ def aggregate_by_creative(df, order_filters=None):
         df["End_Year"] = None
         df["_agg_end_year"] = ""
 
+    def norm_col(col):
+        return col.strip().lower().replace("-", "").replace(" ", "")
+    normed_cols = {norm_col(c): c for c in df.columns}
     agg_dict = {
         "Impressions": "sum",
         "Click-throughs": "sum",
@@ -295,6 +298,20 @@ def aggregate_by_creative(df, order_filters=None):
         "Total_Cost": "sum",
         "Creative": "first",
     }
+    # Add video started/completed columns if present
+    video_started_col = normed_cols.get("videostarted")
+    video_completed_col = normed_cols.get("videocompleted")
+    if video_started_col:
+        agg_dict[video_started_col] = "sum"
+    if video_completed_col:
+        agg_dict[video_completed_col] = "sum"
+    # Find NTB columns by normalized name
+    ntb_col = normed_cols.get("newtobrandpurchases")
+    total_ntb_col = normed_cols.get("totalnewtobrandpurchases")
+    if ntb_col:
+        agg_dict[ntb_col] = "sum"
+    if total_ntb_col:
+        agg_dict[total_ntb_col] = "sum"
     # Note: Input_Creative_ID is not preserved/aggregated (user requested removal)
 
     # Choose grouping keys depending on quarter option
@@ -315,6 +332,13 @@ def aggregate_by_creative(df, order_filters=None):
     grp["CTR"] = (grp["Click-throughs"] / denom * 100).round(4)
     grp["DPVR"] = (grp["DPV"] / denom * 100).round(4)
     grp["Purchase_Rate"] = (grp["Purchases"] / denom * 100).round(4)
+    # Calculate VCR (Video Completion Rate)
+    if video_started_col and video_completed_col and video_started_col in grp.columns and video_completed_col in grp.columns:
+        started = pd.to_numeric(grp[video_started_col], errors="coerce").replace(0, 1)
+        completed = pd.to_numeric(grp[video_completed_col], errors="coerce")
+        grp["VCR"] = (completed / started * 100).round(4)
+    else:
+        grp["VCR"] = 0.0
     
     # Calculate Promoted ROAS (from promoted Sales_USD) and Total ROAS (from Total_Sales_USD)
     if "Total_Cost" in grp.columns:
@@ -332,10 +356,9 @@ def aggregate_by_creative(df, order_filters=None):
         grp["Promoted_ROAS"] = 0.0
         grp["Total_ROAS"] = 0.0
 
+
     # Calculate Promoted vs Total DPVR and Purchase Rate
-    # denom uses Impressions (as the app currently uses Impressions for promoted rates)
     denom = grp["Impressions"].replace(0, 1)
-    # Promoted (existing) DPVR/Purchase_Rate are already computed above (DPV/Purchases)
     grp["Promoted_DPVR"] = (grp["DPV"] / denom * 100).round(4) if "DPV" in grp.columns else 0.0
     grp["Promoted_Purchase_Rate"] = (grp["Purchases"] / denom * 100).round(4) if "Purchases" in grp.columns else 0.0
 
@@ -349,6 +372,24 @@ def aggregate_by_creative(df, order_filters=None):
         grp["Total_Purchase_Rate"] = (grp["Total_Purchases"] / denom * 100).round(4)
     else:
         grp["Total_Purchase_Rate"] = 0.0
+
+    # Promoted % NTB (NTB_Purchases / Purchases * 100)
+    ntb_col = normed_cols.get("newtobrandpurchases")
+    if ntb_col and ntb_col in grp.columns and "Purchases" in grp.columns:
+        purchases_denom = grp["Purchases"].replace(0, 1)
+        ntb_numeric = pd.to_numeric(grp[ntb_col], errors="coerce")
+        grp["Promoted_%_NTB"] = (ntb_numeric / purchases_denom * 100).round(4)
+    else:
+        grp["Promoted_%_NTB"] = 0.0
+
+    # Total % NTB (Total_NTB_Purchases / Total_Purchases * 100)
+    total_ntb_col = normed_cols.get("totalnewtobrandpurchases")
+    if total_ntb_col and total_ntb_col in grp.columns and "Total_Purchases" in grp.columns:
+        total_purchases_denom = grp["Total_Purchases"].replace(0, 1)
+        total_ntb_numeric = pd.to_numeric(grp[total_ntb_col], errors="coerce")
+        grp["Total_%_NTB"] = (total_ntb_numeric / total_purchases_denom * 100).round(4)
+    else:
+        grp["Total_%_NTB"] = 0.0
 
     grp = grp.rename(columns={"Creative": "Full_Creative_Name"})
 
@@ -603,23 +644,65 @@ if uploaded_file is not None:
     st.markdown("Configure data filters, sorting, and chart overlays.")
     
     # Main filters in a compact 3-column layout with smaller fields
-    col1, col2, col3 = st.columns([1.8, 1.2, 1])
+    # Support both 'size' and 'ad size' columns (case-insensitive)
+    size_col_candidates = [col for col in processed.columns if col.lower() in ("size", "ad size")]
+    has_size_col = processed is not None and bool(size_col_candidates)
+    size_col = None
+    size_options = []
+    if has_size_col:
+        size_col = size_col_candidates[0]
+        size_options = sorted(processed[size_col].dropna().unique())
+    # Add 'All Sizes' option
+    if size_options:
+        size_options_display = ["All Sizes"] + list(size_options)
+    else:
+        size_options_display = []
+
+    if has_size_col:
+        col1, col2, col3, col4 = st.columns([1.5, 1.2, 1, 1])
+    else:
+        col1, col2, col3 = st.columns([1.8, 1.2, 1])
+
     with col1:
-        selected_orders = st.multiselect("Order", options=order_options, default=["All Orders"], key="order_filter") 
+        # Add tooltips for order options
+        order_tooltips = {order: order for order in order_options}
+        selected_orders = st.multiselect(
+            "Order",
+            options=order_options,
+            default=["All Orders"],
+            key="order_filter",
+            help="Hover to see full order name",
+            format_func=lambda x: x,
+        )
     with col2:
         metric_options = ["CTR", "DPVR", "Purchase_Rate"]
-        # Add Promoted_ROAS if the data contains both Sales and Cost columns
+        # Add VCR if both columns exist
+        def norm_col(col):
+            return col.strip().lower().replace("-", "").replace(" ", "")
+        normed_cols = {norm_col(c): c for c in processed.columns}
+        video_started_col = normed_cols.get("videostarted")
+        video_completed_col = normed_cols.get("videocompleted")
+        if video_started_col and video_completed_col:
+            metric_options.append("VCR")
         if processed is not None and "Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
             metric_options.append("Promoted_ROAS")
-        # Add Total_ROAS if data contains total sales and cost
         if processed is not None and "Total_Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
             metric_options.append("Total_ROAS")
-        # Add Total DPVR / Purchase Rate if the uploaded data contains total-level DPV / Purchases
         if processed is not None and "Total_DPV" in processed.columns:
             metric_options.append("Total_DPVR")
         if processed is not None and "Total_Purchases" in processed.columns:
             metric_options.append("Total_Purchase_Rate")
-    # Friendly labels for selectbox
+
+        # Add NTB KPIs if normalized columns exist
+        def norm_col(col):
+            return col.strip().lower().replace("-", "").replace(" ", "")
+        normed_cols = {norm_col(c): c for c in processed.columns}
+        ntb_col = normed_cols.get("newtobrandpurchases")
+        total_ntb_col = normed_cols.get("totalnewtobrandpurchases")
+        if ntb_col and "Purchases" in processed.columns:
+            metric_options.append("Promoted_%_NTB")
+        if total_ntb_col and "Total_Purchases" in processed.columns:
+            metric_options.append("Total_%_NTB")
     metric_labels = {
         "CTR": "CTR",
         "DPVR": "Promoted DPVR",
@@ -627,33 +710,66 @@ if uploaded_file is not None:
         "Promoted_ROAS": "Promoted ROAS",
         "Total_ROAS": "Total ROAS",
         "Total_DPVR": "Total DPVR",
-        "Total_Purchase_Rate": "Total Purchase Rate"
+        "Total_Purchase_Rate": "Total Purchase Rate",
+        "Promoted_%_NTB": "Promoted % Purchases NTB",
+        "Total_%_NTB": "Total % Purchases NTB",
+        "VCR": "Video Completion Rate (VCR)"
     }
+    # Order metric_options alphabetically by their user-friendly label
+    metric_options = sorted(metric_options, key=lambda x: metric_labels.get(x, x))
     metric = st.selectbox("Sort by KPI", metric_options, index=0, key="metric_filter", format_func=lambda x: metric_labels.get(x, x))
     with col3:
         min_imps = st.number_input("Min Imps", min_value=0, value=100, step=50, key="min_imps_filter")
+    if has_size_col:
+        with col4:
+            selected_sizes = st.multiselect("Size", options=size_options_display, default=["All Sizes"], key="size_filter")
+
+    # Apply filters BEFORE aggregation
+    filtered_processed = processed.copy()
+    if min_imps > 0:
+        filtered_processed = filtered_processed[filtered_processed["Impressions"] >= min_imps]
+    if has_size_col and 'selected_sizes' in locals() and size_col:
+        # If 'All Sizes' is not selected, filter by selected sizes
+        if "All Sizes" not in selected_sizes:
+            filtered_processed = filtered_processed[filtered_processed[size_col].isin(selected_sizes)]
+
+    # identifier filter (pre-aggregation)
+    # Move identifier_filter definition above its first usage
+    identifier_filter = st.session_state.get("identifier_filter", [])
+    if identifier_filter:
+        original_names = []
+        if 'edited_creative_names' in st.session_state:
+            reverse_mapping = {v: k for k, v in st.session_state.edited_creative_names.items()}
+            for selected_name in identifier_filter:
+                original_name = reverse_mapping.get(selected_name, selected_name)
+                original_names.append(original_name)
+        else:
+            original_names = identifier_filter
+        filtered_processed = filtered_processed[filtered_processed["Group_Key"].isin(original_names)]
 
     # Aggregate now (so the identifier filter can show the aggregated tuples)
-    grouped = aggregate_by_creative(processed, selected_orders)
+    grouped = aggregate_by_creative(filtered_processed, selected_orders)
+    if grouped is not None:
+        filtered = grouped.copy()
+    else:
+        filtered = None
+
 
     # Creative identifier filter (updated to include edited names)
     identifier_options = []
     if grouped is not None and not grouped.empty and "Group_Key" in grouped.columns:
         try:
             original_options = sorted(grouped["Group_Key"].astype(str).unique().tolist())
-            # Map original names to edited names for display in filter
             if 'edited_creative_names' in st.session_state:
                 identifier_options = [
-                    st.session_state.edited_creative_names.get(opt, opt) 
+                    st.session_state.edited_creative_names.get(opt, opt)
                     for opt in original_options
                 ]
             else:
                 identifier_options = original_options
         except Exception:
             identifier_options = []
-    
     identifier_filter = st.multiselect("Creative identifiers", options=identifier_options, default=[], key="identifier_filter")
-    
     st.markdown("---")
 
     # Calculate order performance from the processed data
@@ -682,24 +798,8 @@ if uploaded_file is not None:
         st.warning("No data after filtering.")
         st.stop()
 
-    # Apply filters
-    filtered = grouped.copy()
-    if min_imps > 0:
-        filtered = filtered[filtered["Impressions"] >= min_imps]
-    if identifier_filter:
-        # Map edited names back to original names for filtering
-        original_names = []
-        if 'edited_creative_names' in st.session_state:
-            # Create reverse mapping: edited_name -> original_name
-            reverse_mapping = {v: k for k, v in st.session_state.edited_creative_names.items()}
-            for selected_name in identifier_filter:
-                # If it's an edited name, get the original, otherwise use as-is
-                original_name = reverse_mapping.get(selected_name, selected_name)
-                original_names.append(original_name)
-        else:
-            original_names = identifier_filter
-        
-        filtered = filtered[filtered["Group_Key"].isin(original_names)]
+
+    # (All filtering now happens pre-aggregation above)
 
     if filtered.empty:
         st.warning("No creatives match your filters.")
