@@ -733,19 +733,7 @@ if uploaded_file is not None:
         if "All Sizes" not in selected_sizes:
             filtered_processed = filtered_processed[filtered_processed[size_col].isin(selected_sizes)]
 
-    # identifier filter (pre-aggregation)
-    # Move identifier_filter definition above its first usage
-    identifier_filter = st.session_state.get("identifier_filter", [])
-    if identifier_filter:
-        original_names = []
-        if 'edited_creative_names' in st.session_state:
-            reverse_mapping = {v: k for k, v in st.session_state.edited_creative_names.items()}
-            for selected_name in identifier_filter:
-                original_name = reverse_mapping.get(selected_name, selected_name)
-                original_names.append(original_name)
-        else:
-            original_names = identifier_filter
-        filtered_processed = filtered_processed[filtered_processed["Group_Key"].isin(original_names)]
+    # ...existing code...
 
     # Aggregate now (so the identifier filter can show the aggregated tuples)
     grouped = aggregate_by_creative(filtered_processed, selected_orders)
@@ -770,7 +758,23 @@ if uploaded_file is not None:
         except Exception:
             identifier_options = []
     identifier_filter = st.multiselect("Creative identifiers", options=identifier_options, default=[], key="identifier_filter")
+
     st.markdown("---")
+
+    # Filter grouped data based on creative identifier selection
+    filtered = grouped.copy()
+    if identifier_filter:
+        # Map selected filter values to original Group_Key values
+        edited_map = {}
+        for k in grouped["Group_Key"].astype(str).unique():
+            if 'edited_creative_names' in st.session_state:
+                edited_map[st.session_state.edited_creative_names.get(k, k)] = k
+            else:
+                edited_map[k] = k
+        original_names = [edited_map.get(name, name) for name in identifier_filter]
+        original_names_no_year = [name.split(' | ')[0] for name in original_names]
+        all_matches = set(original_names + original_names_no_year)
+        filtered = filtered[filtered["Group_Key"].isin(all_matches)]
 
     # Calculate order performance from the processed data
     order_performance = calculate_order_performance(processed) if processed is not None else {}
@@ -779,11 +783,8 @@ if uploaded_file is not None:
     if order_performance:
         with st.expander("📊 Order Performance Summary", expanded=False):
             st.markdown("*Overall performance metrics calculated from your data by order*")
-            
-            # Create columns for displaying order performance
             num_orders = len(order_performance)
             cols = st.columns(min(num_orders, 4))  # Max 4 columns
-            
             for i, (order_id, metrics) in enumerate(order_performance.items()):
                 with cols[i % 4]:
                     st.metric(
@@ -793,20 +794,15 @@ if uploaded_file is not None:
                     )
 
     # Aggregate
-    # grouped already computed above
     if grouped is None or grouped.empty:
         st.warning("No data after filtering.")
         st.stop()
-
-
-    # (All filtering now happens pre-aggregation above)
 
     if filtered.empty:
         st.warning("No creatives match your filters.")
         st.stop()
 
     # Sort
-    # Ensure the chosen metric exists on the filtered DataFrame (some total metrics are computed fields)
     if metric not in filtered.columns:
         denom = filtered["Impressions"].replace(0, 1)
         if metric == "Total_DPVR" and "Total_DPV" in filtered.columns:
@@ -817,7 +813,6 @@ if uploaded_file is not None:
             filtered["Promoted_DPVR"] = (filtered["DPV"] / denom * 100).round(4)
         elif metric == "Promoted_Purchase_Rate" and "Purchases" in filtered.columns:
             filtered["Promoted_Purchase_Rate"] = (filtered["Purchases"] / denom * 100).round(4)
-        # If still missing, create a zero column to avoid KeyError
         if metric not in filtered.columns:
             filtered[metric] = 0.0
 
