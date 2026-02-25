@@ -722,7 +722,9 @@ if uploaded_file is not None:
         min_imps = st.number_input("Min Imps", min_value=0, value=100, step=50, key="min_imps_filter")
     if has_size_col:
         with col4:
-            selected_sizes = st.multiselect("Size", options=size_options_display, default=["All Sizes"], key="size_filter")
+            # Only set default to ["All Sizes"] if it's in the options, else use []
+            default_size = ["All Sizes"] if "All Sizes" in size_options_display else []
+            selected_sizes = st.multiselect("Size", options=size_options_display, default=default_size, key="size_filter")
 
     # Apply filters BEFORE aggregation
     filtered_processed = processed.copy()
@@ -737,10 +739,11 @@ if uploaded_file is not None:
 
     # Aggregate now (so the identifier filter can show the aggregated tuples)
     grouped = aggregate_by_creative(filtered_processed, selected_orders)
-    if grouped is not None:
-        filtered = grouped.copy()
+    if grouped is None or grouped.empty:
+        st.warning("No data after filtering. Please check your filters or uploaded file.")
+        st.stop()
     else:
-        filtered = None
+        filtered = grouped.copy()
 
 
     # Creative identifier filter (updated to include edited names)
