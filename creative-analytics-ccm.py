@@ -324,6 +324,7 @@ def process_campaign_data(df):
         sales_col = find_column(df, ["sales usd", "sales", "revenue", "revenue usd"])
         total_sales_col = find_column(df, ["total sales usd", "total sales", "total_sales", "total_sales_usd"])
         cost_col = find_column(df, ["total cost", "cost", "spend", "media cost"])
+        subscription_col = find_column(df, ["subscription sign-ups", "subscription signups", "subscription sign ups", "subscriptions"])
 
         # Detect start/end date columns (common names). Keep as Start_Date / End_Date
         start_col = find_column(df, ["line item start date", "start date", "start_date", "line_item_start_date", "start"])
@@ -342,6 +343,7 @@ def process_campaign_data(df):
         if sales_col:    rename_map[sales_col]    = "Sales_USD"
         if total_sales_col: rename_map[total_sales_col] = "Total_Sales_USD"
         if cost_col:     rename_map[cost_col]     = "Total_Cost"
+        if subscription_col: rename_map[subscription_col] = "Subscription sign-ups"
         if start_col:    rename_map[start_col]    = "Start_Date"
         if end_col:      rename_map[end_col]      = "End_Date"
 
@@ -369,8 +371,8 @@ def process_campaign_data(df):
                 df[col] = 0
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
 
-        # Process Sales, Total Sales, DPV, Purchases and Cost columns (keep as float for numeric calcs)
-        for col in ["Sales_USD", "Total_Sales_USD", "Total_Cost", "DPV", "Total_DPV", "Purchases", "Total_Purchases"]:
+        # Process Sales, Total Sales, DPV, Purchases, Cost and Subscription columns (keep as float for numeric calcs)
+        for col in ["Sales_USD", "Total_Sales_USD", "Total_Cost", "DPV", "Total_DPV", "Purchases", "Total_Purchases", "Subscription sign-ups"]:
             if col not in df.columns:
                 # For counts like DPV/Purchases keep as ints where appropriate later; initialize to 0.0 for safe math
                 df[col] = 0.0
@@ -471,6 +473,7 @@ def aggregate_by_creative(df, order_filters=None):
         "Sales_USD": "sum",
         "Total_Sales_USD": "sum",
         "Total_Cost": "sum",
+        "Subscription sign-ups": "sum",
         "Creative": "first",
     }
     # Add video started/completed columns if present
@@ -578,7 +581,7 @@ def aggregate_by_creative(df, order_filters=None):
     grp["Group_Key"] = grp.apply(make_group_key, axis=1)
 
     # Reorder columns to keep compatibility
-    base_cols = ["Group_Key", "Creative_ID", "Full_Creative_Name", "Impressions", "Click-throughs", "CTR", "DPV", "DPVR", "Purchases", "Purchase_Rate", "Sales_USD", "Total_Cost"]
+    base_cols = ["Group_Key", "Creative_ID", "Full_Creative_Name", "Impressions", "Click-throughs", "CTR", "DPV", "DPVR", "Purchases", "Purchase_Rate", "Sales_USD", "Total_Cost", "Subscription sign-ups"]
     # include End_Year column near the front
     front = ["End_Year"]
 
@@ -851,6 +854,11 @@ if uploaded_file is not None:
         )
     with col2:
         metric_options = ["CTR", "DPVR", "Purchase_Rate"]
+        # Add Subscription sign-ups and Cost per subscription if columns exist
+        if processed is not None and "Subscription sign-ups" in processed.columns:
+            metric_options.append("Subscription sign-ups")
+        if processed is not None and "Total_Cost" in processed.columns and "Subscription sign-ups" in processed.columns:
+            metric_options.append("Cost per subscription")
         # Add VCR if both columns exist
         def norm_col(col):
             return col.strip().lower().replace("-", "").replace(" ", "")
@@ -889,6 +897,8 @@ if uploaded_file is not None:
         "Promoted_%_NTB": "Promoted % Purchases NTB",
         "Total_%_NTB": "Total % Purchases NTB",
         "VCR": "Video Completion Rate (VCR)"
+        ,"Subscription sign-ups": "Subscription Sign-ups"
+        ,"Cost per subscription": "Cost per Subscription"
     }
     # Order metric_options alphabetically by their user-friendly label
     metric_options = sorted(metric_options, key=lambda x: metric_labels.get(x, x))
@@ -1003,6 +1013,8 @@ if uploaded_file is not None:
             filtered["Promoted_DPVR"] = (filtered["DPV"] / denom * 100).round(4)
         elif metric == "Promoted_Purchase_Rate" and "Purchases" in filtered.columns:
             filtered["Promoted_Purchase_Rate"] = (filtered["Purchases"] / denom * 100).round(4)
+        elif metric == "Cost per subscription" and "Total_Cost" in filtered.columns and "Subscription sign-ups" in filtered.columns:
+            filtered["Cost per subscription"] = (filtered["Total_Cost"] / filtered["Subscription sign-ups"].replace(0, float('nan'))).round(4)
         if metric not in filtered.columns:
             filtered[metric] = 0.0
 
