@@ -850,13 +850,7 @@ if uploaded_file is not None:
             format_func=lambda x: x,
         )
     with col2:
-            metric_options = ["CTR", "DPVR", "Purchase_Rate"]
-            # Add Subscription sign ups if column exists
-            if processed is not None and "Subscription sign ups" in processed.columns:
-                metric_options.append("Subscription sign ups")
-            # Add Cost per Subscription if columns exist
-            if processed is not None and "Total_Cost" in processed.columns and "Subscription sign ups" in processed.columns:
-                metric_options.append("Cost per Subscription")
+        metric_options = ["CTR", "DPVR", "Purchase_Rate"]
         # Add VCR if both columns exist
         def norm_col(col):
             return col.strip().lower().replace("-", "").replace(" ", "")
@@ -875,35 +869,30 @@ if uploaded_file is not None:
             metric_options.append("Total_Purchase_Rate")
 
         # Add NTB KPIs if normalized columns exist
+        def norm_col(col):
+            return col.strip().lower().replace("-", "").replace(" ", "")
+        normed_cols = {norm_col(c): c for c in processed.columns}
         ntb_col = normed_cols.get("newtobrandpurchases")
         total_ntb_col = normed_cols.get("totalnewtobrandpurchases")
         if ntb_col and "Purchases" in processed.columns:
             metric_options.append("Promoted_%_NTB")
         if total_ntb_col and "Total_Purchases" in processed.columns:
             metric_options.append("Total_%_NTB")
-
-        metric_labels = {
-           "CTR": "CTR",
-           "DPVR": "Promoted DPVR",
-           "Purchase_Rate": "Promoted Purchase Rate",
-           "Promoted_ROAS": "Promoted ROAS",
-           "Total_ROAS": "Total ROAS",
-           "Total_DPVR": "Total DPVR",
-           "Total_Purchase_Rate": "Total Purchase Rate",
-           "Promoted_%_NTB": "Promoted % Purchases NTB",
-           "Total_%_NTB": "Total % Purchases NTB",
-           "VCR": "Video Completion Rate (VCR)",
-           "Subscription sign ups": "Subscription Sign Ups",
-           "Cost per Subscription": "Cost per Subscription"
+    metric_labels = {
+        "CTR": "CTR",
+        "DPVR": "Promoted DPVR",
+        "Purchase_Rate": "Promoted Purchase Rate",
+        "Promoted_ROAS": "Promoted ROAS",
+        "Total_ROAS": "Total ROAS",
+        "Total_DPVR": "Total DPVR",
+        "Total_Purchase_Rate": "Total Purchase Rate",
+        "Promoted_%_NTB": "Promoted % Purchases NTB",
+        "Total_%_NTB": "Total % Purchases NTB",
+        "VCR": "Video Completion Rate (VCR)"
     }
-            # Order metric_options alphabetically by their user-friendly label
-            metric_options = sorted(metric_options, key=lambda x: metric_labels.get(x, x))
-            metric = st.selectbox("Sort by KPI", metric_options, index=0, key="metric_filter", format_func=lambda x: metric_labels.get(x, x))
-
-            # Add calculated column for Cost per Subscription to processed dataframe if needed
-            if "Cost per Subscription" in metric_options:
-                processed["Cost per Subscription"] = processed["Total_Cost"] / processed["Subscription sign ups"].replace(0, pd.NA)
-                processed["Cost per Subscription"] = processed["Cost per Subscription"].fillna(0)
+    # Order metric_options alphabetically by their user-friendly label
+    metric_options = sorted(metric_options, key=lambda x: metric_labels.get(x, x))
+    metric = st.selectbox("Sort by KPI", metric_options, index=0, key="metric_filter", format_func=lambda x: metric_labels.get(x, x))
     with col3:
         min_imps = st.number_input("Min Imps", min_value=0, value=100, step=50, key="min_imps_filter")
     if has_size_col:
