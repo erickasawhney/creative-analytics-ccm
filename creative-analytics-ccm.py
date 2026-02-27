@@ -30,73 +30,248 @@ How to use:
 )
 
 # ==============================
-# GET CREATIVE IDENTIFIER 
+# GET CREATIVE IDENTIFIER
 # ==============================
-# To get the creative identifier, perform the following steps: 
-# for each row in the input file, seperate creative column by underscores
-#   get the last two entries
-#   group the entries into DCP and creative Identifier
-#   if creative identifier is not found, use the DCP as the creative identifier
-# aggregate by (creative identifier, end year)
+# Extracts the creative identifier ("Unique ID" / creative version name) from
+# the ad-name string.  Amazon DSP reports use underscore-delimited naming with
+# product-specific conventions:
+#
+#   Global template:
+#     Locale_OrderName_CreativeType_ProductType_Size_ASIN_FlightDate_Placement_DCP-ID_UniqueID
+#
+#   Product variations:
+#     DSP (AAP):   ..._CreativeType_ProductType_Size_ASIN_FlightDate_Placement_UniqueID
+#     IMDb:        ..._CreativeType_ProductType_Size_ASIN_FlightDate_Placement_DCP-ID_UniqueID
+#     Devices (FTV/FireTablet/Kindle): ..._OP Single/Multi_CreativeName_CTA_Format__WxH_
+#     STV - PVA:   OrderConvention + Ad1/Ad2/Ad3 suffixes
+#     STV - Twitch: TWITCH_[LOCALE]_DESKTOP_STREAM_DISPLAY_ADS_GUARANTEED
+#     Class 1:     Class 1: AMZN [LOCALE] ... _DCP-ID_UniqueID
+#     Audio Ads:   Audio Ads - Guaranteed - Cross Device - RON - US
+#
+# The function applies a priority chain of pattern-matching strategies to
+# reliably extract the creative identifier across all products.
+
+# -- Precompiled patterns for noise-token detection --
+_SIZE_PATTERN = re.compile(r'^\d{2,4}x\d{2,4}$')
+_DATE_RANGE_PATTERN = re.compile(r'\d{4}-\d{2}-\d{2}\s*-\s*\d{4}-\d{2}-\d{2}')
+
+# Tokens that are NOT creative names -- they are CTAs, format codes, or placement labels
+_CTA_TOKENS = frozenset({
+    'watch now', 'play now', 'shop now', 'learn more', 'subscribe now',
+    'buy now', 'stream now', 'listen now', 'sign up', 'get started',
+    'order now', 'explore now', 'discover more', 'see more', 'download now',
+    'try now', 'view now', 'book now', 'apply now', 'save now',
+})
+_FORMAT_TOKENS = frozenset({
+    'dp', 'video', 'static', 'image', 'gif', 'html5', 'mp4', 'mov',
+})
+_PLACEMENT_TOKENS = frozenset({
+    'guaranteed', 'auction', 'programmatic', 'reserved', 'desktop',
+    'mobile', 'stream', 'display', 'ads', 'feed', 'preroll', 'bumper',
+    'ron', 'ros',
+})
+_CREATIVE_TYPE_TOKENS = frozenset({
+    'video 6s', 'video 10s', 'video 15s', 'video 20s', 'video 30s',
+    'video 60s', 'image (static)', 'image (static)', 'image - mobile o&o',
+    'image', 'static',
+})
+# Month/date-range shorthand tokens common in line item names
+_MONTH_TOKENS = frozenset({
+    'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct',
+    'nov', 'dec', 'jan-mar', 'apr-jun', 'jul-sep', 'oct-dec', 'jan-feb',
+    'feb-mar', 'mar-apr', 'apr-may', 'may-jun', 'jun-jul', 'jul-aug',
+    'aug-sep', 'sep-oct', 'oct-nov', 'nov-dec', 'jan-dec',
+})
+
+
+def _is_noise_token(t):
+    """Return True if token is non-creative noise (dimensions, CTA, format, placement, etc.)."""
+    t_clean = t.strip()
+    if not t_clean:
+        return True
+    t_lower = t_clean.lower()
+
+    # Dimensions like 1920x1080, 320x180, 980x55x250
+    if _SIZE_PATTERN.match(t_lower):
+        return True
+    # Also catch multi-dimension tokens like "980x55x250"
+    if re.fullmatch(r'\d{2,4}x\d{2,4}(x\d{2,4})?', t_lower):
+        return True
+
+    # Call-to-action phrases
+    if t_lower in _CTA_TOKENS:
+        return True
+
+    # Format/placement codes
+    if t_lower in _FORMAT_TOKENS:
+        return True
+
+    # Placement tokens (Twitch / STV line items)
+    if t_lower in _PLACEMENT_TOKENS:
+        return True
+
+    # Campaign promo suffixes
+    if t_lower.startswith('pvc promo'):
+        return True
+
+    # Month/flight-window shorthand
+    if t_lower in _MONTH_TOKENS:
+        return True
+
+    # Locale-only tokens (2-3 letter country codes at very start)
+    # We don't strip these here -- they are handled contextually
+
+    return False
+
+
+def _looks_like_dcp(s):
+    """Return True if the token looks like a DCP code or long numeric ID."""
+    if not s:
+        return False
+    s_low = s.lower()
+    if re.search(r"\bdcp\d+\b", s_low):
+        return True
+    # numeric-only tokens of length >= 5 are also likely IDs (e.g. ASIN, Campaign ID)
+    if re.fullmatch(r"\d{5,}", s_low):
+        return True
+    return False
+
+
+def _looks_like_size_token(s):
+    """Return True if the token is an ad-size dimension string."""
+    if not s:
+        return False
+    return bool(_SIZE_PATTERN.match(s.strip().lower())) or bool(re.fullmatch(r'\d{2,4}x\d{2,4}(x\d{2,4})?', s.strip().lower()))
+
+
+def _looks_like_creative_type(s):
+    """Return True if the token matches a known creative-type label."""
+    if not s:
+        return False
+    s_low = s.strip().lower()
+    if s_low in _CREATIVE_TYPE_TOKENS:
+        return True
+    # Patterns like "Video 15s", "Video 30s", "Image (Static)"
+    if re.match(r'^video\s+\d+s$', s_low):
+        return True
+    if re.match(r'^image\s*(\(.*\))?$', s_low):
+        return True
+    if re.match(r'^image\s*-\s*mobile', s_low):
+        return True
+    return False
+
+
+def _looks_like_class_label(s):
+    """Return True if the token is a Class label like 'Class 1'."""
+    if not s:
+        return False
+    return bool(re.match(r'^class\s+\d+$', s.strip().lower()))
+
+
 def get_group_key(text):
+    """Extract the creative identifier from an ad-name string.
+
+    Applies multiple strategies in priority order to handle naming differences
+    across DSP, IMDb, Devices (FTV), STV, Twitch, Class 1, and Audio products.
+    """
     txt = str(text or "").strip()
-    txt_lower = txt.lower()
 
-    # New behavior per top-of-file comment:
-    # - split the creative name on underscores
-    # - take the last two entries as [DCP, Creative Identifier]
-    # - return the Creative Identifier when present, otherwise fall back to the DCP
-    # - if no underscore parts exist or they are empty, fall back to previous heuristics
-    if '_' in txt:
-        parts = [p.strip() for p in txt.split('_') if p.strip()]
-        if parts:
-            # Many filenames contain DCP codes and creative identifiers in varying order,
-            # for example: '..._fall seasonal_DCP03903799' or '..._DCP03640867_Frozen Breakfast BTS'.
-            # Heuristic: remove any token that looks like a DCP (e.g., starts with 'DCP' followed by digits
-            # or is a long numeric token), then take the last remaining token as the creative id.
-            def _looks_like_dcp(s):
-                if not s:
-                    return False
-                s_low = s.lower()
-                if re.search(r"\bdcp\d+\b", s_low):
-                    return True
-                # numeric-only tokens of length >= 5 are also likely IDs
-                if re.fullmatch(r"\d{5,}", s_low):
-                    return True
-                return False
+    if not txt:
+        return txt[:30]
 
-            # clean trailing punctuation/spaces
-            def _clean_token(s):
-                if not s:
-                    return ""
-                s = re.sub(r"[^0-9A-Za-z \-_.]+", "", s)
-                s = re.sub(r"[-_.\s]+$", "", s).strip()
-                return s
+    # If no underscores at all, use simple word-based fallback
+    if '_' not in txt:
+        stop_words = {"image", "static", "class", "sov", "ad", "v1", "v2",
+                      "copy", "final", "png", "jpg"}
+        words = [w for w in re.split(r"[_.\-]+", txt)
+                 if w and w.lower() not in stop_words and len(w) > 1]
+        if len(words) >= 2:
+            return " ".join(words[-2:]).title()
+        if words:
+            return words[0].title()
+        return txt[:30]
 
-            # Identify and remove DCP-like tokens
-            non_dcp_parts = [p for p in parts if not _looks_like_dcp(p)]
+    parts = [p.strip() for p in txt.split('_')]
+    non_empty = [p for p in parts if p.strip()]
 
-            # Prefer last non-DCP token as creative id if available; otherwise fall back to second-last token
-            if non_dcp_parts:
-                creative_candidate = non_dcp_parts[-1]
-            elif len(parts) >= 2:
-                creative_candidate = parts[-2]
-            else:
-                creative_candidate = parts[-1]
+    # ==================================================================
+    # STRATEGY 1 -- Devices / FTV / FireTablet / Kindle pattern
+    # ==================================================================
+    # These use "OP Single" or "OP Multi" as a marker.  The creative name
+    # is the token immediately after the OP marker.
+    #   Example: ..._OP Single_Alice's Adventures In Wonderland__Watch Now_DP__320x180
+    #   Example: ..._OP Multi_MarqueeTV Sizzle Reel_Watch now_Video__1920x1080_
+    op_idx = None
+    for i, p in enumerate(non_empty):
+        if re.match(r'^OP\s+(Single|Multi)$', p.strip(), re.IGNORECASE):
+            op_idx = i
+            break
 
-            creative_clean = _clean_token(creative_candidate)
-            if creative_clean:
-                return creative_clean
+    if op_idx is not None and op_idx + 1 < len(non_empty):
+        creative = non_empty[op_idx + 1]
+        # Strip trailing non-alphanumeric chars but keep internal punctuation
+        creative = re.sub(r"[^0-9A-Za-z /\-':.,&]+$", "", creative).strip()
+        if creative:
+            return creative
 
-    # Fallback: try a tokenized heuristic similar to previous behavior
-    stop_words = {"image", "static", "class", "sov", "ad", "v1", "v2", "copy", "final", "png", "jpg"}
-    words = [w for w in re.split(r"[_.-]+", txt) if w and w.lower() not in stop_words and len(w) > 1]
+    # ==================================================================
+    # STRATEGY 2 -- DSP / IMDb / Class 1 / STV / Audio / Generic pattern
+    # ==================================================================
+    # Walk backwards from the end, skipping noise tokens (dimensions, CTAs,
+    # format codes, DCP codes, date ranges, placement labels).
+    # The first meaningful token encountered is the creative identifier.
+    #
+    # DSP:     ..._DCP04585381_Q4 - DTM Holiday        -> "Q4 - DTM Holiday"
+    # IMDb:    ..._DCP########_UniqueID                 -> "UniqueID"
+    # Class 1: ..._2025-02-26 - 2025-03-31_March Madness -> "March Madness"
+    # STV:     ..._Ad1 / Ad2 suffix                     -> handled naturally
+    for i in range(len(non_empty) - 1, -1, -1):
+        token = non_empty[i]
+
+        # Skip noise
+        if _is_noise_token(token):
+            continue
+
+        # Skip DCP codes
+        if _looks_like_dcp(token):
+            continue
+
+        # Skip date-range tokens like "2025-01-01 - 2025-03-31"
+        if _DATE_RANGE_PATTERN.match(token):
+            continue
+
+        # Skip creative-type tokens ("Video 15s", "Image (Static)", etc.)
+        if _looks_like_creative_type(token):
+            continue
+
+        # Skip Class labels ("Class 1")
+        if _looks_like_class_label(token):
+            continue
+
+        # Skip ad-size tokens that may not match the simple WxH pattern
+        if _looks_like_size_token(token):
+            continue
+
+        # Clean the token
+        clean = re.sub(r"[^0-9A-Za-z \-':.,/&]+", "", token).strip()
+        clean = re.sub(r"[-_.\s]+$", "", clean).strip()
+        if clean:
+            return clean
+
+    # ==================================================================
+    # STRATEGY 3 -- Final fallback
+    # ==================================================================
+    stop_words = {"image", "static", "class", "sov", "ad", "v1", "v2",
+                  "copy", "final", "png", "jpg"}
+    words = [w for w in re.split(r"[_.\-]+", txt)
+             if w and w.lower() not in stop_words and len(w) > 1]
     if len(words) >= 2:
         return " ".join(words[-2:]).title()
     if words:
         return words[0].title()
 
     return txt[:30]
+
 
 def normalize_columns(df):
     df.columns = (df.columns
