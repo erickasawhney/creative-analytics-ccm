@@ -857,17 +857,17 @@ if uploaded_file is not None:
             # Add Cost per Subscription if columns exist
             if processed is not None and "Total_Cost" in processed.columns and "Subscription sign ups" in processed.columns:
                 metric_options.append("Cost per Subscription")
-            # Add VCR if both columns exist
-            def norm_col(col):
-                return col.strip().lower().replace("-", "").replace(" ", "")
-            normed_cols = {norm_col(c): c for c in processed.columns}
-            video_started_col = normed_cols.get("videostarted")
-            video_completed_col = normed_cols.get("videocompleted")
-            if video_started_col and video_completed_col:
-                metric_options.append("VCR")
-            if processed is not None and "Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
-                metric_options.append("Promoted_ROAS")
-            if processed is not None and "Total_Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
+        # Add VCR if both columns exist
+        def norm_col(col):
+            return col.strip().lower().replace("-", "").replace(" ", "")
+        normed_cols = {norm_col(c): c for c in processed.columns}
+        video_started_col = normed_cols.get("videostarted")
+        video_completed_col = normed_cols.get("videocompleted")
+        if video_started_col and video_completed_col:
+            metric_options.append("VCR")
+        if processed is not None and "Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
+            metric_options.append("Promoted_ROAS")
+        if processed is not None and "Total_Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
             metric_options.append("Total_ROAS")
         if processed is not None and "Total_DPV" in processed.columns:
             metric_options.append("Total_DPVR")
@@ -875,16 +875,14 @@ if uploaded_file is not None:
             metric_options.append("Total_Purchase_Rate")
 
         # Add NTB KPIs if normalized columns exist
-        def norm_col(col):
-            return col.strip().lower().replace("-", "").replace(" ", "")
-        normed_cols = {norm_col(c): c for c in processed.columns}
         ntb_col = normed_cols.get("newtobrandpurchases")
         total_ntb_col = normed_cols.get("totalnewtobrandpurchases")
         if ntb_col and "Purchases" in processed.columns:
             metric_options.append("Promoted_%_NTB")
         if total_ntb_col and "Total_Purchases" in processed.columns:
             metric_options.append("Total_%_NTB")
-    metric_labels = {
+
+        metric_labels = {
            "CTR": "CTR",
            "DPVR": "Promoted DPVR",
            "Purchase_Rate": "Promoted Purchase Rate",
@@ -898,9 +896,9 @@ if uploaded_file is not None:
            "Subscription sign ups": "Subscription Sign Ups",
            "Cost per Subscription": "Cost per Subscription"
     }
-    # Order metric_options alphabetically by their user-friendly label
-    metric_options = sorted(metric_options, key=lambda x: metric_labels.get(x, x))
-    metric = st.selectbox("Sort by KPI", metric_options, index=0, key="metric_filter", format_func=lambda x: metric_labels.get(x, x))
+        # Order metric_options alphabetically by their user-friendly label
+        metric_options = sorted(metric_options, key=lambda x: metric_labels.get(x, x))
+        metric = st.selectbox("Sort by KPI", metric_options, index=0, key="metric_filter", format_func=lambda x: metric_labels.get(x, x))
 
         # Add calculated column for Cost per Subscription to processed dataframe if needed
         if "Cost per Subscription" in metric_options:
