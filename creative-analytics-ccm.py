@@ -967,7 +967,12 @@ if uploaded_file is not None:
         filtered = filtered[filtered["Group_Key"].isin(all_matches)]
 
     # Calculate order performance from the processed data
-    order_performance = calculate_order_performance(processed) if processed is not None else {}
+
+        # Show error if processed is None and a KPI is selected
+        if processed is None:
+            st.error("Data not included in report.")
+            st.stop()
+        order_performance = calculate_order_performance(processed) if processed is not None else {}
     
     # Display order performance summary if available (as optional dropdown)
     if order_performance:
