@@ -857,17 +857,17 @@ if uploaded_file is not None:
             # Add Cost per Subscription if columns exist
             if processed is not None and "Total_Cost" in processed.columns and "Subscription sign ups" in processed.columns:
                 metric_options.append("Cost per Subscription")
-        # Add VCR if both columns exist
-        def norm_col(col):
-            return col.strip().lower().replace("-", "").replace(" ", "")
-        normed_cols = {norm_col(c): c for c in processed.columns}
-        video_started_col = normed_cols.get("videostarted")
-        video_completed_col = normed_cols.get("videocompleted")
-        if video_started_col and video_completed_col:
-            metric_options.append("VCR")
-        if processed is not None and "Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
-            metric_options.append("Promoted_ROAS")
-        if processed is not None and "Total_Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
+            # Add VCR if both columns exist
+            def norm_col(col):
+                return col.strip().lower().replace("-", "").replace(" ", "")
+            normed_cols = {norm_col(c): c for c in processed.columns}
+            video_started_col = normed_cols.get("videostarted")
+            video_completed_col = normed_cols.get("videocompleted")
+            if video_started_col and video_completed_col:
+                metric_options.append("VCR")
+            if processed is not None and "Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
+                metric_options.append("Promoted_ROAS")
+            if processed is not None and "Total_Sales_USD" in processed.columns and "Total_Cost" in processed.columns:
             metric_options.append("Total_ROAS")
         if processed is not None and "Total_DPV" in processed.columns:
             metric_options.append("Total_DPVR")
