@@ -896,14 +896,14 @@ if uploaded_file is not None:
            "Subscription sign ups": "Subscription Sign Ups",
            "Cost per Subscription": "Cost per Subscription"
     }
-        # Order metric_options alphabetically by their user-friendly label
-        metric_options = sorted(metric_options, key=lambda x: metric_labels.get(x, x))
-        metric = st.selectbox("Sort by KPI", metric_options, index=0, key="metric_filter", format_func=lambda x: metric_labels.get(x, x))
+            # Order metric_options alphabetically by their user-friendly label
+            metric_options = sorted(metric_options, key=lambda x: metric_labels.get(x, x))
+            metric = st.selectbox("Sort by KPI", metric_options, index=0, key="metric_filter", format_func=lambda x: metric_labels.get(x, x))
 
-        # Add calculated column for Cost per Subscription to processed dataframe if needed
-        if "Cost per Subscription" in metric_options:
-            processed["Cost per Subscription"] = processed["Total_Cost"] / processed["Subscription sign ups"].replace(0, pd.NA)
-            processed["Cost per Subscription"] = processed["Cost per Subscription"].fillna(0)
+            # Add calculated column for Cost per Subscription to processed dataframe if needed
+            if "Cost per Subscription" in metric_options:
+                processed["Cost per Subscription"] = processed["Total_Cost"] / processed["Subscription sign ups"].replace(0, pd.NA)
+                processed["Cost per Subscription"] = processed["Cost per Subscription"].fillna(0)
     with col3:
         min_imps = st.number_input("Min Imps", min_value=0, value=100, step=50, key="min_imps_filter")
     if has_size_col:
