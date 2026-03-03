@@ -40,8 +40,8 @@ def save_feedback(feedback_data):
 # ==============================
 # Page Config
 # ==============================
-st.set_page_config(page_title="CREATIVE ANALYTICS TOOL", page_icon="chart_with_upwards_trend", layout="wide")
-st.title("CREATIVE ANALYTICS TOOL")
+st.set_page_config(page_title="CREATIVE ANALYSIS TOOL", page_icon="chart_with_upwards_trend", layout="wide")
+st.title("CREATIVE ANALYSIS TOOL")
 # Show usage as an ordered list so each step is on its own row
 st.markdown(
     """
