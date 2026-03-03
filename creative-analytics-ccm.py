@@ -1106,12 +1106,16 @@ if uploaded_file is not None:
         if not identifier_filter and not explicitly_filtered_by_one_order:
             st.info("**Only 1 creative matches your filters.** Please add more creative identifiers to compare performance.")
         chart_df = sorted_df.copy()
-        title_prefix = "LOWEST" if metric == "Cost per subscription" else "TOP"
-        title = f"**{title_prefix} CREATIVES BY {metric}**"
+        if metric == "Cost per subscription":
+            title = f"**TOP CREATIVES by lowest {metric}**"
+        else:
+            title = f"**TOP CREATIVES BY {metric}**"
     else:
         chart_df = sorted_df.head(num_to_show).copy()
-        title_prefix = "Lowest" if metric == "Cost per subscription" else "TOP"
-        title = f"{title_prefix} CREATIVES BY {metric}"
+        if metric == "Cost per subscription":
+            title = f"TOP CREATIVES by lowest {metric}"
+        else:
+            title = f"TOP CREATIVES BY {metric}"
 
     # Use wrapped labels for the chart's x-axis so long creative names don't get visually cut off.
     # Use edited names if available
