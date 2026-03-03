@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 import re
 import base64
@@ -1044,7 +1044,9 @@ if uploaded_file is not None:
         if metric not in filtered.columns:
             filtered[metric] = 0.0
 
-    sorted_df = filtered.sort_values(metric, ascending=False).reset_index(drop=True)
+    # Sort - Cost per subscription goes lowest to highest, all others highest to lowest
+    ascending_order = True if metric == "Cost per subscription" else False
+    sorted_df = filtered.sort_values(metric, ascending=ascending_order).reset_index(drop=True)
     total_creatives = len(sorted_df)
 
     if total_creatives == 0:
@@ -1104,10 +1106,12 @@ if uploaded_file is not None:
         if not identifier_filter and not explicitly_filtered_by_one_order:
             st.info("**Only 1 creative matches your filters.** Please add more creative identifiers to compare performance.")
         chart_df = sorted_df.copy()
-        title = f"**TOP CREATIVES BY {metric}**"
+        title_prefix = "LOWEST" if metric == "Cost per subscription" else "TOP"
+        title = f"**{title_prefix} CREATIVES BY {metric}**"
     else:
         chart_df = sorted_df.head(num_to_show).copy()
-        title = f"TOP CREATIVES BY {metric}"
+        title_prefix = "Lowest" if metric == "Cost per subscription" else "TOP"
+        title = f"{title_prefix} CREATIVES BY {metric}"
 
     # Use wrapped labels for the chart's x-axis so long creative names don't get visually cut off.
     # Use edited names if available
@@ -1215,9 +1219,21 @@ if uploaded_file is not None:
     has_order_data = False
 
     # Choose display formats depending on metric type
-    is_percent_metric = metric in ["CTR", "DPVR", "Purchase_Rate"]
-    text_template = "%{text:.4f}%" if is_percent_metric else "%{text:.2f}"
-    hover_y_template = "%{y:.4f}%" if is_percent_metric else "$%{y:.2f}"
+    is_percent_metric = metric in ["CTR", "DPVR", "Purchase_Rate", "Total_DPVR", "Total_Purchase_Rate", "Promoted_%_NTB", "Total_%_NTB", "VCR"]
+    is_cost_metric = metric == "Cost per subscription"
+    
+    # Set chart order: lowest to highest for costs, highest to lowest for everything else
+    category_order = 'total ascending' if is_cost_metric else 'total descending'
+    
+    if is_percent_metric:
+        text_template = "%{text:.4f}%"
+        hover_y_template = "%{y:.4f}%"
+    elif is_cost_metric:
+        text_template = "$%{text:.2f}"
+        hover_y_template = "$%{y:.2f}"
+    else:
+        text_template = "%{text:.2f}"
+        hover_y_template = "$%{y:.2f}"
     
     if has_order_data:
         # Create subplots to handle both bars and lines
@@ -1329,7 +1345,7 @@ if uploaded_file is not None:
             fig.update_layout(
                 xaxis_title="", yaxis_title=metric, xaxis_tickangle=45,
                 showlegend=True, legend_title="Filter", margin=dict(b=160),
-                xaxis={'categoryorder': 'total descending'}
+                xaxis={'categoryorder': category_order}
             )
         else:
             fig = px.bar(
@@ -1344,7 +1360,7 @@ if uploaded_file is not None:
             fig.update_layout(
                 xaxis_title="", yaxis_title=metric, xaxis_tickangle=45,
                 showlegend=False, margin=dict(b=160),
-                xaxis={'categoryorder': 'total descending'}
+                xaxis={'categoryorder': category_order}
             )
 
         fig.update_traces(
@@ -1797,8 +1813,7 @@ with st.form("feedback_form"):
     with col1:
         # Rating with emojis
         satisfaction_options = [
-            "😞 Very Dissatisfied",
-            "🙁 Dissatisfied",
+            "😔 Dissatisfied",
             "😐 Neutral",
             "🙂 Satisfied",
             "😊 Very Satisfied"
@@ -1806,15 +1821,22 @@ with st.form("feedback_form"):
         satisfaction = st.radio(
             "How satisfied are you with this tool?",
             options=satisfaction_options,
-            index=2,
+            index=1,
             help="Select your satisfaction level"
         )
         
-        # Hours saved
-        hours_saved = st.number_input(
-            "Approximately how many hours did this tool save you?",
-            min_value=0.0, max_value=100.0, value=0.0, step=0.5,
-            help="Estimate the time saved compared to manual analysis"
+        # Time spent using the tool
+        time_spent_with_tool = st.number_input(
+            "How much time did you spend on this tool?",
+            min_value=0.0, max_value=100.0, value=0.0, step=0.25,
+            help="Time in hours (e.g., 0.5 for 30 minutes)"
+        )
+        
+        # Time would have spent without the tool
+        time_without_tool = st.number_input(
+            "How much time would you have spent on creative analysis or reporting without the tool?",
+            min_value=0.0, max_value=100.0, value=0.0, step=0.25,
+            help="Estimated time in hours if done manually"
         )
     
     with col2:
@@ -1848,7 +1870,8 @@ with st.form("feedback_form"):
         feedback_data = {
             "timestamp": timestamp,
             "satisfaction": satisfaction,
-            "hours_saved": hours_saved,
+            "time_spent_with_tool": time_spent_with_tool,
+            "time_without_tool": time_without_tool,
             "would_recommend": would_recommend,
             "user_alias": user_alias if user_alias else "",
             "comments": comments
