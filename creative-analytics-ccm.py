@@ -1085,7 +1085,14 @@ if uploaded_file is not None:
     default_num_to_show = min(15, total_creatives) if total_creatives > 1 else 1
     
     # Use session state or widget values if they exist, otherwise use defaults
-    num_to_show = st.session_state.get("num_to_show_slider", default_num_to_show)
+    # Reset to default if total_creatives changed (e.g., identifier filter changed)
+    prev_total = st.session_state.get("prev_total_creatives", 0)
+    if prev_total != total_creatives:
+        st.session_state["prev_total_creatives"] = total_creatives
+        num_to_show = default_num_to_show
+        st.session_state["num_to_show_slider"] = default_num_to_show
+    else:
+        num_to_show = st.session_state.get("num_to_show_slider", default_num_to_show)
     bar_width = st.session_state.get("bar_width_slider", 0.8)
     bar_color = st.session_state.get("bar_color_picker", "#1f77b4")
     
@@ -1142,11 +1149,15 @@ if uploaded_file is not None:
         benchmark_pr = 0.5
         benchmark_promoted = 4.0
         benchmark_total = 6.0
+        benchmark_total_dpvr = 2.5
+        benchmark_total_pr = 0.8
         benchmark_ctr_category = 2.2
         benchmark_dpvr_category = 1.8
         benchmark_pr_category = 0.6
         benchmark_promoted_category = 4.5
         benchmark_total_category = 6.5
+        benchmark_total_dpvr_category = 3.0
+        benchmark_total_pr_category = 1.0
 
         # Show benchmark inputs only for current metric if enabled
         if show_benchmark:
@@ -1181,6 +1192,8 @@ if uploaded_file is not None:
                     elif metric == "Purchase_Rate": benchmark_pr = advertiser_benchmark or benchmark_pr
                     elif metric == "Promoted_ROAS": benchmark_promoted = advertiser_benchmark or benchmark_promoted
                     elif metric == "Total_ROAS": benchmark_total = advertiser_benchmark or benchmark_total
+                    elif metric == "Total_DPVR": benchmark_total_dpvr = advertiser_benchmark or benchmark_total_dpvr
+                    elif metric == "Total_Purchase_Rate": benchmark_total_pr = advertiser_benchmark or benchmark_total_pr
                 
                 with bench_col2:
                     category_benchmark = st.number_input(
@@ -1199,6 +1212,8 @@ if uploaded_file is not None:
                     elif metric == "Purchase_Rate": benchmark_pr_category = category_benchmark or benchmark_pr_category
                     elif metric == "Promoted_ROAS": benchmark_promoted_category = category_benchmark or benchmark_promoted_category
                     elif metric == "Total_ROAS": benchmark_total_category = category_benchmark or benchmark_total_category
+                    elif metric == "Total_DPVR": benchmark_total_dpvr_category = category_benchmark or benchmark_total_dpvr_category
+                    elif metric == "Total_Purchase_Rate": benchmark_total_pr_category = category_benchmark or benchmark_total_pr_category
 
                     # Add a color key for the benchmark lines
                     st.markdown(
@@ -1286,7 +1301,7 @@ if uploaded_file is not None:
         
         # Add benchmark lines if enabled
         if show_benchmark:
-            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total}
+            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr}
             benchmark_value = benchmark_values.get(metric)
             
             if benchmark_value is not None:
@@ -1299,7 +1314,7 @@ if uploaded_file is not None:
                     hovertemplate=f"<b>Advertiser Benchmark {metric}</b><br>Value: %{{y:.4f}}<extra></extra>"
                 ))
             
-            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category}
+            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category}
             benchmark_value_category = benchmark_values_category.get(metric)
             
             if benchmark_value_category is not None:
@@ -1375,7 +1390,7 @@ if uploaded_file is not None:
         
         # Add benchmark lines if enabled (for charts without order performance)
         if show_benchmark:
-            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total}
+            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr}
             benchmark_value = benchmark_values.get(metric)
             
             if benchmark_value is not None:
@@ -1388,7 +1403,7 @@ if uploaded_file is not None:
                     hovertemplate=f"<b>Advertiser Benchmark {metric}</b><br>Value: {hover_y_template}<extra></extra>"
                 ))
             
-            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category}
+            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category}
             benchmark_value_category = benchmark_values_category.get(metric)
             
             if benchmark_value_category is not None:
