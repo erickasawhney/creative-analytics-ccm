@@ -9,7 +9,33 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import warnings
 import textwrap
+import csv
+import os
+from datetime import datetime
 warnings.filterwarnings('ignore')
+
+# ==============================
+# Feedback Storage Function
+# ==============================
+def save_feedback(feedback_data):
+    """Save user feedback to CSV file"""
+    try:
+        # Save in the same directory as this script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(script_dir, "creative_tool_feedback.csv")
+        file_exists = os.path.isfile(file_path)
+        
+        with open(file_path, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=feedback_data.keys())
+            
+            if not file_exists:
+                writer.writeheader()
+            
+            writer.writerow(feedback_data)
+        return True
+    except Exception as e:
+        st.error(f"Error saving feedback: {e}")
+        return False
 
 # ==============================
 # Page Config
@@ -1755,8 +1781,85 @@ if uploaded_file is not None:
     st.dataframe(styled, use_container_width=True)
 
     # CSV download (use original column names)
-    csv = sorted_df.to_csv(index=False)
-    st.download_button("Download Full Results CSV", csv, "creative_analytics.csv", "text/csv")
+    csv_data = sorted_df.to_csv(index=False)
+    st.download_button("Download Full Results CSV", csv_data, "creative_analytics.csv", "text/csv")
+
+# ==============================
+# User Feedback Section
+# ==============================
+st.markdown("---")
+st.markdown("### 📢 Help Us Improve This Tool")
+st.markdown("Your feedback helps us understand the tool's impact and make it even better!")
+
+with st.form("feedback_form"):
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Rating with emojis
+        satisfaction_options = [
+            "😞 Very Dissatisfied",
+            "🙁 Dissatisfied",
+            "😐 Neutral",
+            "🙂 Satisfied",
+            "😊 Very Satisfied"
+        ]
+        satisfaction = st.radio(
+            "How satisfied are you with this tool?",
+            options=satisfaction_options,
+            index=2,
+            help="Select your satisfaction level"
+        )
+        
+        # Hours saved
+        hours_saved = st.number_input(
+            "Approximately how many hours did this tool save you?",
+            min_value=0.0, max_value=100.0, value=0.0, step=0.5,
+            help="Estimate the time saved compared to manual analysis"
+        )
+    
+    with col2:
+        # Would recommend
+        would_recommend = st.radio(
+            "Would you recommend this tool to a colleague?",
+            options=["Yes", "No", "Maybe"],
+            horizontal=True
+        )
+        
+        # User alias (optional)
+        user_alias = st.text_input(
+            "Your alias (optional):",
+            placeholder="e.g., jsmith",
+            help="Optional - helps us follow up if needed"
+        )
+    
+    # Comments
+    comments = st.text_area(
+        "Feedback, comments or suggestions:",
+        height=100,
+        placeholder="Tell us what you think, what features you'd like to see, or any issues you encountered..."
+    )
+    
+    submitted = st.form_submit_button("📤 Submit Feedback", type="primary")
+    
+    if submitted:
+        # Timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        feedback_data = {
+            "timestamp": timestamp,
+            "satisfaction": satisfaction,
+            "hours_saved": hours_saved,
+            "would_recommend": would_recommend,
+            "user_alias": user_alias if user_alias else "",
+            "comments": comments
+        }
+        
+        # Save feedback
+        if save_feedback(feedback_data):
+            st.success("✅ Thank you for your feedback! Your input helps us improve the tool.")
+            st.balloons()
+        else:
+            st.warning("There was an issue saving your feedback. Please try again or contact @esawhney directly.")
 
 # ==============================
 # Footer
