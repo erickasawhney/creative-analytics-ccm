@@ -9,75 +9,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import warnings
 import textwrap
-import csv
-import os
-from datetime import datetime
-import time
-try:
-    from st_gsheets_connection import GSheetsConnection
-    GSHEETS_AVAILABLE = True
-except ImportError:
-    GSHEETS_AVAILABLE = False
 warnings.filterwarnings('ignore')
-
-# ==============================
-# Feedback Storage Function
-# ==============================
-def save_feedback_to_google_sheets(feedback_data):
-    """Save feedback to Google Sheets using Streamlit connection"""
-    if not GSHEETS_AVAILABLE:
-        # Package not installed, fall back to CSV
-        return save_feedback_to_csv(feedback_data)
-    
-    try:
-        # Connect to Google Sheets
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        
-        # Read existing data
-        try:
-            existing_df = conn.read(worksheet="CREATIVE ANALYSIS FEEDBACK", usecols=list(range(7)), ttl=0)
-        except:
-            # If sheet is empty or doesn't exist, create headers
-            existing_df = pd.DataFrame(columns=['timestamp', 'satisfaction', 'time_spent_with_tool', 'time_without_tool', 'would_recommend', 'user_alias', 'comments'])
-        
-        # Create new row
-        new_row = pd.DataFrame([feedback_data])
-        
-        # Append to existing data
-        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
-        
-        # Write back to sheet
-        conn.update(worksheet="CREATIVE ANALYSIS FEEDBACK", data=updated_df)
-        
-        return True
-            
-    except Exception as e:
-        # Fallback to CSV for local testing
-        st.warning(f"Google Sheets unavailable (using local CSV for testing): {str(e)}")
-        return save_feedback_to_csv(feedback_data)
-
-def save_feedback_to_csv(feedback_data):
-    """Fallback: Save user feedback to CSV file (for local testing)"""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    fieldnames = ['timestamp', 'satisfaction', 'time_spent_with_tool', 'time_without_tool', 'would_recommend', 'user_alias', 'comments']
-    
-    try:
-        file_path = os.path.join(script_dir, "creative_tool_feedback.csv")
-        file_exists = os.path.isfile(file_path)
-        
-        with open(file_path, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow(feedback_data)
-        return True
-    except Exception as e:
-        st.error(f"Unable to save feedback: {e}")
-        return False
-
-def save_feedback(feedback_data):
-    """Main feedback save function - tries Google Sheets first, falls back to CSV"""
-    return save_feedback_to_google_sheets(feedback_data)
 
 # ==============================
 # Page Config
@@ -1193,6 +1125,8 @@ if uploaded_file is not None:
         benchmark_total = 6.0
         benchmark_total_dpvr = 2.5
         benchmark_total_pr = 0.8
+        benchmark_subscriptions = 100.0
+        benchmark_cost_per_sub = 10.0
         benchmark_ctr_category = 2.2
         benchmark_dpvr_category = 1.8
         benchmark_pr_category = 0.6
@@ -1200,6 +1134,8 @@ if uploaded_file is not None:
         benchmark_total_category = 6.5
         benchmark_total_dpvr_category = 3.0
         benchmark_total_pr_category = 1.0
+        benchmark_subscriptions_category = 120.0
+        benchmark_cost_per_sub_category = 8.0
 
         # Show benchmark inputs only for current metric if enabled
         if show_benchmark:
@@ -1211,17 +1147,21 @@ if uploaded_file is not None:
                 "Total_ROAS": "Total ROAS",
                 "Total_DPVR": "Total DPVR",
                 "Total_Purchase_Rate": "Total Purchase Rate",
+                "Subscription sign-ups": "Subscription Sign-ups",
+                "Cost per subscription": "Cost per Subscription",
             }
-            units = {"CTR": "%", "DPVR": "%", "Purchase_Rate": "%", "Promoted_ROAS": "$", "Total_ROAS": "$", "Total_DPVR": "%", "Total_Purchase_Rate": "%"}
-            examples = {"CTR": "2.0", "DPVR": "1.5", "Purchase_Rate": "0.5", "Promoted_ROAS": "4.0", "Total_ROAS": "6.0", "Total_DPVR": "2.5", "Total_Purchase_Rate": "0.8"}
+            units = {"CTR": "%", "DPVR": "%", "Purchase_Rate": "%", "Promoted_ROAS": "$", "Total_ROAS": "$", "Total_DPVR": "%", "Total_Purchase_Rate": "%", "Subscription sign-ups": "#", "Cost per subscription": "$"}
+            examples = {"CTR": "2.0", "DPVR": "1.5", "Purchase_Rate": "0.5", "Promoted_ROAS": "4.0", "Total_ROAS": "6.0", "Total_DPVR": "2.5", "Total_Purchase_Rate": "0.8", "Subscription sign-ups": "100", "Cost per subscription": "10.0"}
 
             if metric in benchmark_labels:
                 bench_col1, bench_col2 = st.columns([1, 1])
                 with bench_col1:
+                    # Adjust max_value based on metric type
+                    max_val = 10000.0 if metric in ["Subscription sign-ups", "Cost per subscription"] else 100.0
                     advertiser_benchmark = st.number_input(
                         f"Advertiser Benchmark ({units[metric]})",
                         min_value=0.0,
-                        max_value=100.0,
+                        max_value=max_val,
                         value=None,
                         step=0.1,
                         help=f"Enter advertiser benchmark value",
@@ -1236,12 +1176,16 @@ if uploaded_file is not None:
                     elif metric == "Total_ROAS": benchmark_total = advertiser_benchmark or benchmark_total
                     elif metric == "Total_DPVR": benchmark_total_dpvr = advertiser_benchmark or benchmark_total_dpvr
                     elif metric == "Total_Purchase_Rate": benchmark_total_pr = advertiser_benchmark or benchmark_total_pr
+                    elif metric == "Subscription sign-ups": benchmark_subscriptions = advertiser_benchmark or benchmark_subscriptions
+                    elif metric == "Cost per subscription": benchmark_cost_per_sub = advertiser_benchmark or benchmark_cost_per_sub
                 
                 with bench_col2:
+                    # Adjust max_value based on metric type
+                    max_val = 10000.0 if metric in ["Subscription sign-ups", "Cost per subscription"] else 100.0
                     category_benchmark = st.number_input(
                         f"Category Benchmark ({units[metric]})",
                         min_value=0.0,
-                        max_value=100.0,
+                        max_value=max_val,
                         value=None,
                         step=0.1,
                         help=f"Enter category benchmark value",
@@ -1256,6 +1200,8 @@ if uploaded_file is not None:
                     elif metric == "Total_ROAS": benchmark_total_category = category_benchmark or benchmark_total_category
                     elif metric == "Total_DPVR": benchmark_total_dpvr_category = category_benchmark or benchmark_total_dpvr_category
                     elif metric == "Total_Purchase_Rate": benchmark_total_pr_category = category_benchmark or benchmark_total_pr_category
+                    elif metric == "Subscription sign-ups": benchmark_subscriptions_category = category_benchmark or benchmark_subscriptions_category
+                    elif metric == "Cost per subscription": benchmark_cost_per_sub_category = category_benchmark or benchmark_cost_per_sub_category
 
                     # Add a color key for the benchmark lines
                     st.markdown(
@@ -1343,7 +1289,7 @@ if uploaded_file is not None:
         
         # Add benchmark lines if enabled
         if show_benchmark:
-            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr}
+            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr, "Subscription sign-ups": benchmark_subscriptions, "Cost per subscription": benchmark_cost_per_sub}
             benchmark_value = benchmark_values.get(metric)
             
             if benchmark_value is not None:
@@ -1356,7 +1302,7 @@ if uploaded_file is not None:
                     hovertemplate=f"<b>Advertiser Benchmark {metric}</b><br>Value: %{{y:.4f}}<extra></extra>"
                 ))
             
-            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category}
+            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category, "Subscription sign-ups": benchmark_subscriptions_category, "Cost per subscription": benchmark_cost_per_sub_category}
             benchmark_value_category = benchmark_values_category.get(metric)
             
             if benchmark_value_category is not None:
@@ -1432,7 +1378,7 @@ if uploaded_file is not None:
         
         # Add benchmark lines if enabled (for charts without order performance)
         if show_benchmark:
-            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr}
+            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr, "Subscription sign-ups": benchmark_subscriptions, "Cost per subscription": benchmark_cost_per_sub}
             benchmark_value = benchmark_values.get(metric)
             
             if benchmark_value is not None:
@@ -1445,7 +1391,7 @@ if uploaded_file is not None:
                     hovertemplate=f"<b>Advertiser Benchmark {metric}</b><br>Value: {hover_y_template}<extra></extra>"
                 ))
             
-            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category}
+            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category, "Subscription sign-ups": benchmark_subscriptions_category, "Cost per subscription": benchmark_cost_per_sub_category}
             benchmark_value_category = benchmark_values_category.get(metric)
             
             if benchmark_value_category is not None:
@@ -1865,85 +1811,26 @@ if uploaded_file is not None:
 # User Feedback Section
 # ==============================
 st.markdown("---")
-st.markdown("### 📢 Help Us Improve This Tool")
-st.markdown("Your feedback helps us understand the tool's impact and make it even better!")
+st.markdown("### 📢 Submit Feedback on Slack")
 
-with st.form("feedback_form"):
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Rating with emojis
-        satisfaction_options = [
-            "😔 Dissatisfied",
-            "😐 Neutral",
-            "🙂 Satisfied",
-            "😊 Very Satisfied"
-        ]
-        satisfaction = st.radio(
-            "How satisfied are you with this tool?",
-            options=satisfaction_options,
-            index=1,
-            help="Select your satisfaction level"
-        )
-        
-        # Time spent using the tool
-        time_spent_with_tool = st.number_input(
-            "How much time did you spend using this tool?",
-            min_value=0.0, max_value=100.0, value=0.0, step=0.25,
-            help="Time in hours (e.g., 0.5 for 30 minutes)"
-        )
-        
-        # Time would have spent without the tool
-        time_without_tool = st.number_input(
-            "How much time would this have taken without the tool?",
-            min_value=0.0, max_value=100.0, value=0.0, step=0.25,
-            help="Estimated time in hours if done manually"
-        )
-    
-    with col2:
-        # Would recommend
-        would_recommend = st.radio(
-            "Would you recommend this tool to a colleague?",
-            options=["Yes", "No", "Maybe"],
-            horizontal=True
-        )
-        
-        # User alias (optional)
-        user_alias = st.text_input(
-            "Your alias (optional):",
-            placeholder="e.g., jsmith",
-            help="Optional - helps us follow up if needed"
-        )
-    
-    # Comments
-    comments = st.text_area(
-        "Feedback, comments or suggestions:",
-        height=100,
-        placeholder="Tell us what you think, what features you'd like to see, or any issues you encountered..."
-    )
-    
-    submitted = st.form_submit_button("📤 Submit Feedback", type="primary")
-    
-    if submitted:
-        # Timestamp
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        feedback_data = {
-            "timestamp": timestamp,
-            "satisfaction": satisfaction,
-            "time_spent_with_tool": time_spent_with_tool,
-            "time_without_tool": time_without_tool,
-            "would_recommend": would_recommend,
-            "user_alias": user_alias if user_alias else "",
-            "comments": comments
-        }
-        
-        # Save feedback
-        if save_feedback(feedback_data):
-            st.success("✅ Thank you for your feedback! Your input helps us improve the tool.")
-            st.balloons()
-        else:
-            st.warning("There was an issue saving your feedback. Please try again or contact @esawhney directly.")
+# Slack invitation highlight box
+st.markdown(
+    """
+    <div style="background-color: #E6F2FF; 
+                border-left: 6px solid #0066CC;
+                color: #003366; 
+                padding: 20px 30px; 
+                font-size: 26px;
+                font-weight: bold;
+                margin: 3px 0;
+                max-width: 700px;">
+        💬 JOIN <i>#</i>CCM-CREATIVE-ANALYSIS-TOOL ON SLACK
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown("Your feedback helps us understand the tool's impact and make it even better!")
 
 # ==============================
 # Footer
