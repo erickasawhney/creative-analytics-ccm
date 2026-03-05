@@ -18,24 +18,58 @@ warnings.filterwarnings('ignore')
 # Feedback Storage Function
 # ==============================
 def save_feedback(feedback_data):
-    """Save user feedback to CSV file"""
+    """Save user feedback to CSV file with backup"""
     try:
         # Save in the same directory as this script
         script_dir = os.path.dirname(os.path.abspath(__file__))
         file_path = os.path.join(script_dir, "creative_tool_feedback.csv")
+        backup_path = os.path.join(script_dir, "creative_tool_feedback_backup.csv")
         file_exists = os.path.isfile(file_path)
         
+        # Define consistent fieldnames
+        fieldnames = ['timestamp', 'satisfaction', 'time_spent_with_tool', 'time_without_tool', 'would_recommend', 'user_alias', 'comments']
+        
+        # Save to primary file
         with open(file_path, 'a', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=feedback_data.keys())
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             
             if not file_exists:
                 writer.writeheader()
             
             writer.writerow(feedback_data)
+        
+        # Also save to backup file (always append, never create headers to keep all history)
+        try:
+            backup_exists = os.path.isfile(backup_path)
+            with open(backup_path, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                
+                if not backup_exists:
+                    writer.writeheader()
+                
+                writer.writerow(feedback_data)
+        except Exception as backup_error:
+            # Log backup error but don't fail the main save
+            print(f"Backup save warning: {backup_error}")
+        
         return True
     except Exception as e:
         st.error(f"Error saving feedback: {e}")
-        return False
+        # Try to save to backup location as last resort
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            emergency_path = os.path.join(script_dir, f"feedback_emergency_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+            fieldnames = ['timestamp', 'satisfaction', 'time_spent_with_tool', 'time_without_tool', 'would_recommend', 'user_alias', 'comments']
+            
+            with open(emergency_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(feedback_data)
+            
+            st.warning(f"⚠️ Saved to emergency backup file: {os.path.basename(emergency_path)}")
+            return True
+        except:
+            return False
 
 # ==============================
 # Page Config
@@ -1846,14 +1880,14 @@ with st.form("feedback_form"):
         
         # Time spent using the tool
         time_spent_with_tool = st.number_input(
-            "How much time did you spend on this tool?",
+            "How much time did you spend using this tool?",
             min_value=0.0, max_value=100.0, value=0.0, step=0.25,
             help="Time in hours (e.g., 0.5 for 30 minutes)"
         )
         
         # Time would have spent without the tool
         time_without_tool = st.number_input(
-            "How much time would you have spent on creative analysis or reporting without the tool?",
+            "How much time would this have taken without the tool?",
             min_value=0.0, max_value=100.0, value=0.0, step=0.25,
             help="Estimated time in hours if done manually"
         )
