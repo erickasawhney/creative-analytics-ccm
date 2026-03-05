@@ -594,94 +594,6 @@ def aggregate_by_creative(df, order_filters=None):
     col_order = [c for c in col_order if c in grp.columns]
     return grp[col_order]
 
-def calculate_order_performance(df):
-    """Calculate overall performance metrics for each order"""
-    if df is None or df.empty or "Order_ID" not in df.columns:
-        return {}
-    
-    # Filter out rows without Order_ID
-    order_df = df[df["Order_ID"].notna() & (df["Order_ID"] != "")].copy()
-    if order_df.empty:
-        return {}
-    
-    # Aggregate metrics by Order_ID
-    agg_dict = {
-        "Impressions": "sum",
-        "Click-throughs": "sum", 
-        "DPV": "sum",
-        "Total_DPV": "sum",
-        "Purchases": "sum",
-        "Total_Purchases": "sum"
-    }
-    
-    # Add Sales and Cost columns if they exist
-    if "Sales_USD" in order_df.columns:
-        agg_dict["Sales_USD"] = "sum"
-    if "Total_Cost" in order_df.columns:
-        agg_dict["Total_Cost"] = "sum"
-    if "Total_DPV" in order_df.columns:
-        agg_dict["Total_DPV"] = "sum"
-    if "Total_Purchases" in order_df.columns:
-        agg_dict["Total_Purchases"] = "sum"
-        
-    order_agg = order_df.groupby("Order_ID").agg(agg_dict).reset_index()
-    
-    # Calculate rates for each order
-    order_performance = {}
-    for _, row in order_agg.iterrows():
-        order_id = row["Order_ID"]
-        impressions = row["Impressions"]
-        
-        if impressions > 0:  # Avoid division by zero
-            ctr = (row["Click-throughs"] / impressions * 100)
-            dpvr = (row["DPV"] / impressions * 100) 
-            pr = (row["Purchases"] / impressions * 100)
-            
-            metrics_dict = {
-                "CTR": round(ctr, 4),
-                "DPVR": round(dpvr, 4),
-                "Purchase_Rate": round(pr, 4),
-                "Impressions": impressions,
-                "Click-throughs": row["Click-throughs"],
-                "DPV": row["DPV"], 
-                "Purchases": row["Purchases"]
-            }
-            
-            # Calculate Promoted ROAS and Total ROAS if Sales and Cost columns exist
-            if "Total_Cost" in row:
-                cost = row["Total_Cost"]
-                # Promoted ROAS
-                if "Sales_USD" in row:
-                    sales = row["Sales_USD"]
-                    if cost > 0:
-                        metrics_dict["Promoted_ROAS"] = round(sales / cost, 4)
-                    else:
-                        metrics_dict["Promoted_ROAS"] = 0.0
-                    metrics_dict["Sales_USD"] = sales
-                # Total ROAS
-                if "Total_Sales_USD" in row:
-                    total_sales = row["Total_Sales_USD"]
-                    if cost > 0:
-                        metrics_dict["Total_ROAS"] = round(total_sales / cost, 4)
-                    else:
-                        metrics_dict["Total_ROAS"] = 0.0
-                    metrics_dict["Total_Cost"] = cost
-            # Add total DPV / purchase rate if available at order level
-            if "Total_DPV" in row:
-                total_dpv = row["Total_DPV"]
-                metrics_dict["Total_DPV"] = total_dpv
-                metrics_dict["Total_DPVR"] = round((total_dpv / impressions * 100), 4) if impressions > 0 else 0.0
-            if "Total_Purchases" in row:
-                total_p = row["Total_Purchases"]
-                metrics_dict["Total_Purchases"] = total_p
-                metrics_dict["Total_Purchase_Rate"] = round((total_p / impressions * 100), 4) if impressions > 0 else 0.0
-            
-            order_performance[order_id] = metrics_dict
-    
-    return order_performance
-
-
-
 # ==============================
 # 1. UPLOAD FILES
 # ==============================
@@ -976,23 +888,6 @@ if uploaded_file is not None:
         all_matches = set(original_names + original_names_no_year)
         filtered = filtered[filtered["Group_Key"].isin(all_matches)]
 
-    # Calculate order performance from the processed data
-    order_performance = calculate_order_performance(processed) if processed is not None else {}
-    
-    # Display order performance summary if available (as optional dropdown)
-    if order_performance:
-        with st.expander("📊 Order Performance Summary", expanded=False):
-            st.markdown("*Overall performance metrics calculated from your data by order*")
-            num_orders = len(order_performance)
-            cols = st.columns(min(num_orders, 4))  # Max 4 columns
-            for i, (order_id, metrics) in enumerate(order_performance.items()):
-                with cols[i % 4]:
-                    st.metric(
-                        label=f"Order: {order_id}",
-                        value=f"CTR: {metrics['CTR']:.3f}%",
-                        delta=f"DPVR: {metrics['DPVR']:.3f}% | PR: {metrics['Purchase_Rate']:.3f}%"
-                    )
-
     # Aggregate
     if grouped is None or grouped.empty:
         st.warning("No data after filtering.")
@@ -1109,53 +1004,62 @@ if uploaded_file is not None:
     st.markdown(f"### {wrapped_title}", unsafe_allow_html=True)
     
     # Overlay controls right under chart header
-    col1, col2 = st.columns([1, 2])
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
-        show_benchmark = st.checkbox(
-            "Overlay Benchmark Line",
+        show_advertiser_benchmark = st.checkbox(
+            "Overlay Advertiser Benchmark",
             value=False,
-            help="Show benchmark performance line"
+            help="Show advertiser benchmark line"
         )
     with col2:
-        # Default benchmark values
-        benchmark_ctr = 2.0
-        benchmark_dpvr = 1.5
-        benchmark_pr = 0.5
-        benchmark_promoted = 4.0
-        benchmark_total = 6.0
-        benchmark_total_dpvr = 2.5
-        benchmark_total_pr = 0.8
-        benchmark_subscriptions = 100.0
-        benchmark_cost_per_sub = 10.0
-        benchmark_ctr_category = 2.2
-        benchmark_dpvr_category = 1.8
-        benchmark_pr_category = 0.6
-        benchmark_promoted_category = 4.5
-        benchmark_total_category = 6.5
-        benchmark_total_dpvr_category = 3.0
-        benchmark_total_pr_category = 1.0
-        benchmark_subscriptions_category = 120.0
-        benchmark_cost_per_sub_category = 8.0
+        show_category_benchmark = st.checkbox(
+            "Overlay Category Benchmark",
+            value=False,
+            help="Show category benchmark line"
+        )
+    with col3:
+        pass
 
-        # Show benchmark inputs only for current metric if enabled
-        if show_benchmark:
-            benchmark_labels = {
-                "CTR": "CTR",
-                "DPVR": "Promoted DPVR",
-                "Purchase_Rate": "Promoted Purchase Rate",
-                "Promoted_ROAS": "Promoted ROAS",
-                "Total_ROAS": "Total ROAS",
-                "Total_DPVR": "Total DPVR",
-                "Total_Purchase_Rate": "Total Purchase Rate",
-                "Subscription sign-ups": "Subscription Sign-ups",
-                "Cost per subscription": "Cost per Subscription",
-            }
-            units = {"CTR": "%", "DPVR": "%", "Purchase_Rate": "%", "Promoted_ROAS": "$", "Total_ROAS": "$", "Total_DPVR": "%", "Total_Purchase_Rate": "%", "Subscription sign-ups": "#", "Cost per subscription": "$"}
-            examples = {"CTR": "2.0", "DPVR": "1.5", "Purchase_Rate": "0.5", "Promoted_ROAS": "4.0", "Total_ROAS": "6.0", "Total_DPVR": "2.5", "Total_Purchase_Rate": "0.8", "Subscription sign-ups": "100", "Cost per subscription": "10.0"}
+    # Default benchmark values
+    benchmark_ctr = 2.0
+    benchmark_dpvr = 1.5
+    benchmark_pr = 0.5
+    benchmark_promoted = 4.0
+    benchmark_total = 6.0
+    benchmark_total_dpvr = 2.5
+    benchmark_total_pr = 0.8
+    benchmark_subscriptions = 100.0
+    benchmark_cost_per_sub = 10.0
+    benchmark_ctr_category = 2.2
+    benchmark_dpvr_category = 1.8
+    benchmark_pr_category = 0.6
+    benchmark_promoted_category = 4.5
+    benchmark_total_category = 6.5
+    benchmark_total_dpvr_category = 3.0
+    benchmark_total_pr_category = 1.0
+    benchmark_subscriptions_category = 120.0
+    benchmark_cost_per_sub_category = 8.0
 
-            if metric in benchmark_labels:
-                bench_col1, bench_col2 = st.columns([1, 1])
-                with bench_col1:
+    # Show benchmark inputs only for current metric if either benchmark is enabled
+    if show_advertiser_benchmark or show_category_benchmark:
+        benchmark_labels = {
+            "CTR": "CTR",
+            "DPVR": "Promoted DPVR",
+            "Purchase_Rate": "Promoted Purchase Rate",
+            "Promoted_ROAS": "Promoted ROAS",
+            "Total_ROAS": "Total ROAS",
+            "Total_DPVR": "Total DPVR",
+            "Total_Purchase_Rate": "Total Purchase Rate",
+            "Subscription sign-ups": "Subscription Sign-ups",
+            "Cost per subscription": "Cost per Subscription",
+        }
+        units = {"CTR": "%", "DPVR": "%", "Purchase_Rate": "%", "Promoted_ROAS": "$", "Total_ROAS": "$", "Total_DPVR": "%", "Total_Purchase_Rate": "%", "Subscription sign-ups": "#", "Cost per subscription": "$"}
+        examples = {"CTR": "2.0", "DPVR": "1.5", "Purchase_Rate": "0.5", "Promoted_ROAS": "4.0", "Total_ROAS": "6.0", "Total_DPVR": "2.5", "Total_Purchase_Rate": "0.8", "Subscription sign-ups": "100", "Cost per subscription": "10.0"}
+
+        if metric in benchmark_labels:
+            bench_col1, bench_col2 = st.columns([1, 1])
+            with bench_col1:
+                if show_advertiser_benchmark:
                     # Adjust max_value based on metric type
                     max_val = 10000.0 if metric in ["Subscription sign-ups", "Cost per subscription"] else 100.0
                     advertiser_benchmark = st.number_input(
@@ -1168,18 +1072,21 @@ if uploaded_file is not None:
                         placeholder=f"e.g., {examples[metric]}",
                         key="advertiser_benchmark"
                     )
-                    # Update the specific benchmark value
-                    if metric == "CTR": benchmark_ctr = advertiser_benchmark or benchmark_ctr
-                    elif metric == "DPVR": benchmark_dpvr = advertiser_benchmark or benchmark_dpvr
-                    elif metric == "Purchase_Rate": benchmark_pr = advertiser_benchmark or benchmark_pr
-                    elif metric == "Promoted_ROAS": benchmark_promoted = advertiser_benchmark or benchmark_promoted
-                    elif metric == "Total_ROAS": benchmark_total = advertiser_benchmark or benchmark_total
-                    elif metric == "Total_DPVR": benchmark_total_dpvr = advertiser_benchmark or benchmark_total_dpvr
-                    elif metric == "Total_Purchase_Rate": benchmark_total_pr = advertiser_benchmark or benchmark_total_pr
-                    elif metric == "Subscription sign-ups": benchmark_subscriptions = advertiser_benchmark or benchmark_subscriptions
-                    elif metric == "Cost per subscription": benchmark_cost_per_sub = advertiser_benchmark or benchmark_cost_per_sub
-                
-                with bench_col2:
+                else:
+                    advertiser_benchmark = None
+                # Update the specific benchmark value
+                if metric == "CTR": benchmark_ctr = advertiser_benchmark or benchmark_ctr
+                elif metric == "DPVR": benchmark_dpvr = advertiser_benchmark or benchmark_dpvr
+                elif metric == "Purchase_Rate": benchmark_pr = advertiser_benchmark or benchmark_pr
+                elif metric == "Promoted_ROAS": benchmark_promoted = advertiser_benchmark or benchmark_promoted
+                elif metric == "Total_ROAS": benchmark_total = advertiser_benchmark or benchmark_total
+                elif metric == "Total_DPVR": benchmark_total_dpvr = advertiser_benchmark or benchmark_total_dpvr
+                elif metric == "Total_Purchase_Rate": benchmark_total_pr = advertiser_benchmark or benchmark_total_pr
+                elif metric == "Subscription sign-ups": benchmark_subscriptions = advertiser_benchmark or benchmark_subscriptions
+                elif metric == "Cost per subscription": benchmark_cost_per_sub = advertiser_benchmark or benchmark_cost_per_sub
+            
+            with bench_col2:
+                if show_category_benchmark:
                     # Adjust max_value based on metric type
                     max_val = 10000.0 if metric in ["Subscription sign-ups", "Cost per subscription"] else 100.0
                     category_benchmark = st.number_input(
@@ -1192,33 +1099,31 @@ if uploaded_file is not None:
                         placeholder=f"e.g., {examples[metric]}",
                         key="category_benchmark"
                     )
-                    # Update the specific benchmark value
-                    if metric == "CTR": benchmark_ctr_category = category_benchmark or benchmark_ctr_category
-                    elif metric == "DPVR": benchmark_dpvr_category = category_benchmark or benchmark_dpvr_category
-                    elif metric == "Purchase_Rate": benchmark_pr_category = category_benchmark or benchmark_pr_category
-                    elif metric == "Promoted_ROAS": benchmark_promoted_category = category_benchmark or benchmark_promoted_category
-                    elif metric == "Total_ROAS": benchmark_total_category = category_benchmark or benchmark_total_category
-                    elif metric == "Total_DPVR": benchmark_total_dpvr_category = category_benchmark or benchmark_total_dpvr_category
-                    elif metric == "Total_Purchase_Rate": benchmark_total_pr_category = category_benchmark or benchmark_total_pr_category
-                    elif metric == "Subscription sign-ups": benchmark_subscriptions_category = category_benchmark or benchmark_subscriptions_category
-                    elif metric == "Cost per subscription": benchmark_cost_per_sub_category = category_benchmark or benchmark_cost_per_sub_category
+                else:
+                    category_benchmark = None
+                # Update the specific benchmark value
+                if metric == "CTR": benchmark_ctr_category = category_benchmark or benchmark_ctr_category
+                elif metric == "DPVR": benchmark_dpvr_category = category_benchmark or benchmark_dpvr_category
+                elif metric == "Purchase_Rate": benchmark_pr_category = category_benchmark or benchmark_pr_category
+                elif metric == "Promoted_ROAS": benchmark_promoted_category = category_benchmark or benchmark_promoted_category
+                elif metric == "Total_ROAS": benchmark_total_category = category_benchmark or benchmark_total_category
+                elif metric == "Total_DPVR": benchmark_total_dpvr_category = category_benchmark or benchmark_total_dpvr_category
+                elif metric == "Total_Purchase_Rate": benchmark_total_pr_category = category_benchmark or benchmark_total_pr_category
+                elif metric == "Subscription sign-ups": benchmark_subscriptions_category = category_benchmark or benchmark_subscriptions_category
+                elif metric == "Cost per subscription": benchmark_cost_per_sub_category = category_benchmark or benchmark_cost_per_sub_category
 
-                    # Add a color key for the benchmark lines
-                    st.markdown(
-                        """
-                        <div style="display: flex; align-items: center; gap: 24px; margin-top: 8px;">
-                            <span style="display: flex; align-items: center;">
-                                <span style="width: 32px; height: 0; border-top: 4px dotted orange; margin-right: 8px;"></span>
-                                <span style="font-size: 15px;">Advertiser Benchmark</span>
-                            </span>
-                            <span style="display: flex; align-items: center;">
-                                <span style="width: 32px; height: 0; border-top: 4px dashed purple; margin-right: 8px;"></span>
-                                <span style="font-size: 15px;">Category Benchmark</span>
-                            </span>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+            # Add a color key for the benchmark lines
+            legend_items = []
+            if show_advertiser_benchmark:
+                legend_items.append('<span style="display: flex; align-items: center;"><span style="width: 32px; height: 0; border-top: 4px dotted orange; margin-right: 8px;"></span><span style="font-size: 15px;">Advertiser Benchmark</span></span>')
+            if show_category_benchmark:
+                legend_items.append('<span style="display: flex; align-items: center;"><span style="width: 32px; height: 0; border-top: 4px dashed purple; margin-right: 8px;"></span><span style="font-size: 15px;">Category Benchmark</span></span>')
+            
+            if legend_items:
+                st.markdown(
+                    f'<div style="display: flex; align-items: center; gap: 24px; margin-top: 8px;">{"".join(legend_items)}</div>',
+                    unsafe_allow_html=True
+                )
     
 
 
@@ -1288,7 +1193,7 @@ if uploaded_file is not None:
             ))
         
         # Add benchmark lines if enabled
-        if show_benchmark:
+        if show_advertiser_benchmark:
             benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr, "Subscription sign-ups": benchmark_subscriptions, "Cost per subscription": benchmark_cost_per_sub}
             benchmark_value = benchmark_values.get(metric)
             
@@ -1301,7 +1206,8 @@ if uploaded_file is not None:
                     line=dict(color="orange", width=4, dash="dot"),
                     hovertemplate=f"<b>Advertiser Benchmark {metric}</b><br>Value: %{{y:.4f}}<extra></extra>"
                 ))
-            
+        
+        if show_category_benchmark:
             benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category, "Subscription sign-ups": benchmark_subscriptions_category, "Cost per subscription": benchmark_cost_per_sub_category}
             benchmark_value_category = benchmark_values_category.get(metric)
             
@@ -1377,7 +1283,7 @@ if uploaded_file is not None:
         )
         
         # Add benchmark lines if enabled (for charts without order performance)
-        if show_benchmark:
+        if show_advertiser_benchmark:
             benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr, "Subscription sign-ups": benchmark_subscriptions, "Cost per subscription": benchmark_cost_per_sub}
             benchmark_value = benchmark_values.get(metric)
             
@@ -1390,7 +1296,8 @@ if uploaded_file is not None:
                     line=dict(color="orange", width=4, dash="dot"),
                     hovertemplate=f"<b>Advertiser Benchmark {metric}</b><br>Value: {hover_y_template}<extra></extra>"
                 ))
-            
+        
+        if show_category_benchmark:
             benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category, "Subscription sign-ups": benchmark_subscriptions_category, "Cost per subscription": benchmark_cost_per_sub_category}
             benchmark_value_category = benchmark_values_category.get(metric)
             
