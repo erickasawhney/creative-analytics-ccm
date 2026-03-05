@@ -12,63 +12,92 @@ import textwrap
 import csv
 import os
 from datetime import datetime
+import time
 warnings.filterwarnings('ignore')
 
 # ==============================
 # Feedback Storage Function
 # ==============================
 def save_feedback(feedback_data):
-    """Save user feedback to CSV file with backup"""
+    """Save user feedback to CSV file with multiple backup strategies"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    fieldnames = ['timestamp', 'satisfaction', 'time_spent_with_tool', 'time_without_tool', 'would_recommend', 'user_alias', 'comments']
+    
+    # Strategy 1: Try primary file
     try:
-        # Save in the same directory as this script
-        script_dir = os.path.dirname(os.path.abspath(__file__))
         file_path = os.path.join(script_dir, "creative_tool_feedback.csv")
-        backup_path = os.path.join(script_dir, "creative_tool_feedback_backup.csv")
         file_exists = os.path.isfile(file_path)
         
-        # Define consistent fieldnames
-        fieldnames = ['timestamp', 'satisfaction', 'time_spent_with_tool', 'time_without_tool', 'would_recommend', 'user_alias', 'comments']
-        
-        # Save to primary file
         with open(file_path, 'a', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
-            
             if not file_exists:
                 writer.writeheader()
-            
             writer.writerow(feedback_data)
         
-        # Also save to backup file (always append, never create headers to keep all history)
+        # Primary save succeeded, also try backup
         try:
+            backup_path = os.path.join(script_dir, "creative_tool_feedback_backup.csv")
             backup_exists = os.path.isfile(backup_path)
             with open(backup_path, 'a', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
-                
                 if not backup_exists:
                     writer.writeheader()
-                
                 writer.writerow(feedback_data)
-        except Exception as backup_error:
-            # Log backup error but don't fail the main save
-            print(f"Backup save warning: {backup_error}")
+        except:
+            pass  # Backup is optional
         
         return True
-    except Exception as e:
-        st.error(f"Error saving feedback: {e}")
-        # Try to save to backup location as last resort
+        
+    except PermissionError:
+        # Strategy 2: Primary file is locked (probably open in Excel), try backup
         try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
+            backup_path = os.path.join(script_dir, "creative_tool_feedback_backup.csv")
+            backup_exists = os.path.isfile(backup_path)
+            with open(backup_path, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                if not backup_exists:
+                    writer.writeheader()
+                writer.writerow(feedback_data)
+            st.info("💾 Primary file is in use. Saved to backup file successfully!")
+            return True
+        except PermissionError:
+            # Strategy 3: Both files locked, create emergency timestamped file
+            try:
+                emergency_path = os.path.join(script_dir, f"feedback_emergency_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+                with open(emergency_path, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerow(feedback_data)
+                st.info(f"💾 Saved to emergency file: {os.path.basename(emergency_path)}")
+                return True
+            except Exception as e:
+                st.error(f"Unable to save feedback: {e}")
+                return False
+        except Exception as e:
+            # Emergency fallback
+            try:
+                emergency_path = os.path.join(script_dir, f"feedback_emergency_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+                with open(emergency_path, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerow(feedback_data)
+                st.info(f"💾 Saved to emergency file: {os.path.basename(emergency_path)}")
+                return True
+            except:
+                st.error(f"Unable to save feedback: {e}")
+                return False
+    except Exception as e:
+        # Strategy 3: Any other error, create emergency file
+        try:
             emergency_path = os.path.join(script_dir, f"feedback_emergency_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-            fieldnames = ['timestamp', 'satisfaction', 'time_spent_with_tool', 'time_without_tool', 'would_recommend', 'user_alias', 'comments']
-            
             with open(emergency_path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 writer.writeheader()
                 writer.writerow(feedback_data)
-            
-            st.warning(f"⚠️ Saved to emergency backup file: {os.path.basename(emergency_path)}")
+            st.info(f"💾 Saved to emergency file: {os.path.basename(emergency_path)}")
             return True
         except:
+            st.error(f"Unable to save feedback: {e}")
             return False
 
 # ==============================
