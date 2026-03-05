@@ -13,17 +13,54 @@ import csv
 import os
 from datetime import datetime
 import time
+try:
+    from streamlit_gsheets import GSheetsConnection
+    GSHEETS_AVAILABLE = True
+except ImportError:
+    GSHEETS_AVAILABLE = False
 warnings.filterwarnings('ignore')
 
 # ==============================
 # Feedback Storage Function
 # ==============================
-def save_feedback(feedback_data):
-    """Save user feedback to CSV file with multiple backup strategies"""
+def save_feedback_to_google_sheets(feedback_data):
+    """Save feedback to Google Sheets using Streamlit connection"""
+    if not GSHEETS_AVAILABLE:
+        # Package not installed, fall back to CSV
+        return save_feedback_to_csv(feedback_data)
+    
+    try:
+        # Connect to Google Sheets
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        
+        # Read existing data
+        try:
+            existing_df = conn.read(worksheet="CREATIVE ANALYSIS FEEDBACK", usecols=list(range(7)), ttl=0)
+        except:
+            # If sheet is empty or doesn't exist, create headers
+            existing_df = pd.DataFrame(columns=['timestamp', 'satisfaction', 'time_spent_with_tool', 'time_without_tool', 'would_recommend', 'user_alias', 'comments'])
+        
+        # Create new row
+        new_row = pd.DataFrame([feedback_data])
+        
+        # Append to existing data
+        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
+        
+        # Write back to sheet
+        conn.update(worksheet="CREATIVE ANALYSIS FEEDBACK", data=updated_df)
+        
+        return True
+            
+    except Exception as e:
+        # Fallback to CSV for local testing
+        st.warning(f"Google Sheets unavailable (using local CSV for testing): {str(e)}")
+        return save_feedback_to_csv(feedback_data)
+
+def save_feedback_to_csv(feedback_data):
+    """Fallback: Save user feedback to CSV file (for local testing)"""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     fieldnames = ['timestamp', 'satisfaction', 'time_spent_with_tool', 'time_without_tool', 'would_recommend', 'user_alias', 'comments']
     
-    # Strategy 1: Try primary file
     try:
         file_path = os.path.join(script_dir, "creative_tool_feedback.csv")
         file_exists = os.path.isfile(file_path)
@@ -33,72 +70,14 @@ def save_feedback(feedback_data):
             if not file_exists:
                 writer.writeheader()
             writer.writerow(feedback_data)
-        
-        # Primary save succeeded, also try backup
-        try:
-            backup_path = os.path.join(script_dir, "creative_tool_feedback_backup.csv")
-            backup_exists = os.path.isfile(backup_path)
-            with open(backup_path, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                if not backup_exists:
-                    writer.writeheader()
-                writer.writerow(feedback_data)
-        except:
-            pass  # Backup is optional
-        
         return True
-        
-    except PermissionError:
-        # Strategy 2: Primary file is locked (probably open in Excel), try backup
-        try:
-            backup_path = os.path.join(script_dir, "creative_tool_feedback_backup.csv")
-            backup_exists = os.path.isfile(backup_path)
-            with open(backup_path, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                if not backup_exists:
-                    writer.writeheader()
-                writer.writerow(feedback_data)
-            st.info("💾 Primary file is in use. Saved to backup file successfully!")
-            return True
-        except PermissionError:
-            # Strategy 3: Both files locked, create emergency timestamped file
-            try:
-                emergency_path = os.path.join(script_dir, f"feedback_emergency_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-                with open(emergency_path, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-                    writer.writerow(feedback_data)
-                st.info(f"💾 Saved to emergency file: {os.path.basename(emergency_path)}")
-                return True
-            except Exception as e:
-                st.error(f"Unable to save feedback: {e}")
-                return False
-        except Exception as e:
-            # Emergency fallback
-            try:
-                emergency_path = os.path.join(script_dir, f"feedback_emergency_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-                with open(emergency_path, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-                    writer.writerow(feedback_data)
-                st.info(f"💾 Saved to emergency file: {os.path.basename(emergency_path)}")
-                return True
-            except:
-                st.error(f"Unable to save feedback: {e}")
-                return False
     except Exception as e:
-        # Strategy 3: Any other error, create emergency file
-        try:
-            emergency_path = os.path.join(script_dir, f"feedback_emergency_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-            with open(emergency_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerow(feedback_data)
-            st.info(f"💾 Saved to emergency file: {os.path.basename(emergency_path)}")
-            return True
-        except:
-            st.error(f"Unable to save feedback: {e}")
-            return False
+        st.error(f"Unable to save feedback: {e}")
+        return False
+
+def save_feedback(feedback_data):
+    """Main feedback save function - tries Google Sheets first, falls back to CSV"""
+    return save_feedback_to_google_sheets(feedback_data)
 
 # ==============================
 # Page Config
