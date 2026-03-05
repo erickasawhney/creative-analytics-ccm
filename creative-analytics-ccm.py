@@ -14,7 +14,7 @@ import os
 from datetime import datetime
 import time
 try:
-    from streamlit_gsheets import GSheetsConnection
+    from st_gsheets_connection import GSheetsConnection
     GSHEETS_AVAILABLE = True
 except ImportError:
     GSHEETS_AVAILABLE = False
