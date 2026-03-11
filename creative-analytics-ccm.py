@@ -179,6 +179,21 @@ def get_group_key(text):
     if not txt:
         return txt[:30]
 
+    # ==================================================================
+    # STRATEGY 0 -- REC-ASIN-Creative pattern (Component-Based Creative)
+    # ==================================================================
+    # Handle patterns like "...DCP04845031_REC- B0G3R4WM4T- Bright idea_Lifestyle"
+    # Extract everything after "REC-" and ASIN, including underscores in creative name
+    rec_match = re.search(r'REC-\s*([A-Z0-9]+)\s*-\s*(.+?)$', txt, re.IGNORECASE)
+    if rec_match:
+        creative_part = rec_match.group(2).strip()
+        # Clean up extra spaces and normalize, but preserve underscores as spaces
+        creative_part = creative_part.replace('_', ' ')
+        # Remove trailing non-alphanumeric except spaces
+        creative_part = re.sub(r'[^0-9A-Za-z ]+$', '', creative_part).strip()
+        if creative_part:
+            return creative_part
+
     # If no underscores at all, use simple word-based fallback
     if '_' not in txt:
         stop_words = {"image", "static", "class", "sov", "ad", "v1", "v2",
@@ -215,7 +230,38 @@ def get_group_key(text):
             return creative
 
     # ==================================================================
-    # STRATEGY 2 -- DSP / IMDb / Class 1 / STV / Audio / Generic pattern
+    # STRATEGY 2 -- Component-Based Creative with DCP pattern
+    # ==================================================================
+    # For Component-Based Creatives, collect all tokens AFTER the DCP code
+    # Example: "...DCP04855766_Bold beats_Lifestyle" -> "Bold beats Lifestyle"
+    dcp_idx = None
+    for i, p in enumerate(non_empty):
+        if _looks_like_dcp(p):
+            dcp_idx = i
+            break
+    
+    if dcp_idx is not None and dcp_idx + 1 < len(non_empty):
+        # Collect all tokens after the DCP code
+        creative_tokens = []
+        for j in range(dcp_idx + 1, len(non_empty)):
+            token = non_empty[j]
+            # Skip noise tokens but keep everything else
+            if _is_noise_token(token):
+                continue
+            if _DATE_RANGE_PATTERN.match(token):
+                continue
+            if _looks_like_size_token(token):
+                continue
+            # Clean the token but keep it
+            clean = re.sub(r"[^0-9A-Za-z \-':.,/&]+", "", token).strip()
+            if clean:
+                creative_tokens.append(clean)
+        
+        if creative_tokens:
+            return " ".join(creative_tokens)
+    
+    # ==================================================================
+    # STRATEGY 3 -- DSP / IMDb / Class 1 / STV / Audio / Generic pattern
     # ==================================================================
     # Walk backwards from the end, skipping noise tokens (dimensions, CTAs,
     # format codes, DCP codes, date ranges, placement labels).
@@ -259,7 +305,7 @@ def get_group_key(text):
             return clean
 
     # ==================================================================
-    # STRATEGY 3 -- Final fallback
+    # STRATEGY 4 -- Final fallback
     # ==================================================================
     stop_words = {"image", "static", "class", "sov", "ad", "v1", "v2",
                   "copy", "final", "png", "jpg"}
@@ -319,6 +365,9 @@ def process_campaign_data(df):
             "orderid", "order#", "order #", "ordernum", "order id #",
             "campaign name", "campaign", "campaign_name"
         ])
+        
+        # Detect Campaign ID column separately
+        campaign_id_col = find_column(df, ["campaign id", "campaign_id", "campaignid", "campaign #"])
 
         # Detect Sales USD, Total Sales USD and Total Cost columns for ROAS calculation
         sales_col = find_column(df, ["sales usd", "sales", "revenue", "revenue usd"])
@@ -340,6 +389,7 @@ def process_campaign_data(df):
         if total_purch_col: rename_map[total_purch_col] = "Total_Purchases"
         if total_dpv_col: rename_map[total_dpv_col] = "Total_DPV"
         if order_col:    rename_map[order_col]    = "Order_ID"
+        if campaign_id_col: rename_map[campaign_id_col] = "Campaign_ID"
         if sales_col:    rename_map[sales_col]    = "Sales_USD"
         if total_sales_col: rename_map[total_sales_col] = "Total_Sales_USD"
         if cost_col:     rename_map[cost_col]     = "Total_Cost"
@@ -383,6 +433,11 @@ def process_campaign_data(df):
             df["Order_ID"] = df["Order_ID"].astype(str).str.strip()
             df["Order_ID"] = df["Order_ID"].replace({"nan": "", "<NA>": ""}).str.strip()
             df["Order_ID"] = df["Order_ID"].replace({"": None})
+        
+        if "Campaign_ID" in df.columns:
+            df["Campaign_ID"] = df["Campaign_ID"].astype(str).str.strip()
+            df["Campaign_ID"] = df["Campaign_ID"].replace({"nan": "", "<NA>": ""}).str.strip()
+            df["Campaign_ID"] = df["Campaign_ID"].replace({"": None})
 
         return df, df
 
@@ -720,12 +775,28 @@ if uploaded_file is not None:
 
     # Order Filter Options
     order_options = ["All Orders"]
+    order_to_campaign = {}  # Map order names to campaign IDs
     if "Order_ID" in processed.columns:
+        # Build mapping of Order_ID to Campaign_ID (if available)
+        if "Campaign_ID" in processed.columns:
+            temp_df = processed[["Order_ID", "Campaign_ID"]].drop_duplicates()
+            for _, row in temp_df.iterrows():
+                order_id = str(row["Order_ID"]) if pd.notna(row["Order_ID"]) else None
+                campaign_id = str(row["Campaign_ID"]) if pd.notna(row["Campaign_ID"]) else None
+                if order_id and campaign_id:
+                    order_to_campaign[order_id] = campaign_id
+        
         unique_orders = (processed["Order_ID"]
                          .dropna()
                          .astype(str)
                          .unique())
-        order_options.extend(sorted([o for o in unique_orders if o]))
+        # Create display labels with campaign IDs
+        for order in sorted([o for o in unique_orders if o]):
+            if order in order_to_campaign:
+                display_label = f"{order} (ID: {order_to_campaign[order]})"
+            else:
+                display_label = order
+            order_options.append(display_label)
 
     # ==============================
     # GRAPH DATA FILTERS
@@ -756,14 +827,26 @@ if uploaded_file is not None:
     with col1:
         # Add tooltips for order options
         order_tooltips = {order: order for order in order_options}
-        selected_orders = st.multiselect(
+        selected_orders_display = st.multiselect(
             "Order",
             options=order_options,
             default=["All Orders"],
             key="order_filter",
-            help="Hover to see full order name",
+            help="Filter by order name or campaign ID",
             format_func=lambda x: x,
         )
+        
+        # Extract actual order names from display labels (remove campaign ID suffix)
+        selected_orders = []
+        for display_label in selected_orders_display:
+            if display_label == "All Orders":
+                selected_orders.append("All Orders")
+            elif " (ID: " in display_label:
+                # Extract order name before the campaign ID
+                order_name = display_label.split(" (ID: ")[0]
+                selected_orders.append(order_name)
+            else:
+                selected_orders.append(display_label)
     with col2:
         metric_options = ["CTR", "DPVR", "Purchase_Rate"]
         # Add Subscription sign-ups and Cost per subscription if columns exist
