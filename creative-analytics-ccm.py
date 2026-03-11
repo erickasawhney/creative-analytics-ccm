@@ -374,6 +374,7 @@ def process_campaign_data(df):
         total_sales_col = find_column(df, ["total sales usd", "total sales", "total_sales", "total_sales_usd"])
         cost_col = find_column(df, ["total cost", "cost", "spend", "media cost"])
         subscription_col = find_column(df, ["subscription sign-ups", "subscription signups", "subscription sign ups", "subscriptions"])
+        app_subscription_col = find_column(df, ["app subscription sign-ups", "app subscription signups", "app subscription sign ups", "app subscriptions"])
 
         # Detect start/end date columns (common names). Keep as Start_Date / End_Date
         start_col = find_column(df, ["line item start date", "start date", "start_date", "line_item_start_date", "start"])
@@ -394,6 +395,7 @@ def process_campaign_data(df):
         if total_sales_col: rename_map[total_sales_col] = "Total_Sales_USD"
         if cost_col:     rename_map[cost_col]     = "Total_Cost"
         if subscription_col: rename_map[subscription_col] = "Subscription sign-ups"
+        if app_subscription_col: rename_map[app_subscription_col] = "App subscription sign-ups"
         if start_col:    rename_map[start_col]    = "Start_Date"
         if end_col:      rename_map[end_col]      = "End_Date"
 
@@ -422,7 +424,7 @@ def process_campaign_data(df):
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
 
         # Process Sales, Total Sales, DPV, Purchases, Cost and Subscription columns (keep as float for numeric calcs)
-        for col in ["Sales_USD", "Total_Sales_USD", "Total_Cost", "DPV", "Total_DPV", "Purchases", "Total_Purchases", "Subscription sign-ups"]:
+        for col in ["Sales_USD", "Total_Sales_USD", "Total_Cost", "DPV", "Total_DPV", "Purchases", "Total_Purchases", "Subscription sign-ups", "App subscription sign-ups"]:
             if col not in df.columns:
                 # For counts like DPV/Purchases keep as ints where appropriate later; initialize to 0.0 for safe math
                 df[col] = 0.0
@@ -515,6 +517,12 @@ def aggregate_by_creative(df, order_filters=None):
         df["End_Year"] = None
         df["_agg_end_year"] = ""
 
+    # Ensure subscription columns exist for aggregation (fill with 0 if missing)
+    if "Subscription sign-ups" not in df.columns:
+        df["Subscription sign-ups"] = 0
+    if "App subscription sign-ups" not in df.columns:
+        df["App subscription sign-ups"] = 0
+    
     def norm_col(col):
         return col.strip().lower().replace("-", "").replace(" ", "")
     normed_cols = {norm_col(c): c for c in df.columns}
@@ -529,6 +537,7 @@ def aggregate_by_creative(df, order_filters=None):
         "Total_Sales_USD": "sum",
         "Total_Cost": "sum",
         "Subscription sign-ups": "sum",
+        "App subscription sign-ups": "sum",
         "Creative": "first",
     }
     # Add video started/completed columns if present
@@ -641,7 +650,7 @@ def aggregate_by_creative(df, order_filters=None):
     front = ["End_Year"]
 
     # Ensure financial, ROAS, and total-rate columns are present in order if they exist
-    for extra in ["Total_Sales_USD", "Promoted_ROAS", "Total_ROAS", "Total_DPV", "Total_DPVR", "Total_Purchases", "Total_Purchase_Rate"]:
+    for extra in ["Total_Sales_USD", "Promoted_ROAS", "Total_ROAS", "Total_DPV", "Total_DPVR", "Total_Purchases", "Total_Purchase_Rate", "App subscription sign-ups"]:
         if extra in grp.columns and extra not in base_cols:
             base_cols.append(extra)
 
@@ -852,6 +861,8 @@ if uploaded_file is not None:
         # Add Subscription sign-ups and Cost per subscription if columns exist
         if processed is not None and "Subscription sign-ups" in processed.columns:
             metric_options.append("Subscription sign-ups")
+        if processed is not None and "App subscription sign-ups" in processed.columns:
+            metric_options.append("App subscription sign-ups")
         if processed is not None and "Total_Cost" in processed.columns and "Subscription sign-ups" in processed.columns:
             metric_options.append("Cost per subscription")
         # Add VCR if both columns exist
@@ -893,6 +904,7 @@ if uploaded_file is not None:
         "Total_%_NTB": "Total % Purchases NTB",
         "VCR": "Video Completion Rate (VCR)"
         ,"Subscription sign-ups": "Subscription Sign-ups"
+        ,"App subscription sign-ups": "App Subscription Sign-ups"
         ,"Cost per subscription": "Cost per Subscription"
     }
     # Order metric_options alphabetically by their user-friendly label
@@ -993,6 +1005,8 @@ if uploaded_file is not None:
             filtered["Promoted_Purchase_Rate"] = (filtered["Purchases"] / denom * 100).round(4)
         elif metric == "Cost per subscription" and "Total_Cost" in filtered.columns and "Subscription sign-ups" in filtered.columns:
             filtered["Cost per subscription"] = (filtered["Total_Cost"] / filtered["Subscription sign-ups"].replace(0, float('nan'))).round(4)
+            # Filter out creatives with NaN cost per subscription (those with 0 sign-ups)
+            filtered = filtered[filtered["Cost per subscription"].notna()].copy()
         if metric not in filtered.columns:
             filtered[metric] = 0.0
 
@@ -1002,7 +1016,10 @@ if uploaded_file is not None:
     total_creatives = len(sorted_df)
 
     if total_creatives == 0:
-        st.warning("No creatives meet the impression threshold.")
+        if metric == "Cost per subscription":
+            st.warning("No creatives have subscription sign-ups data to calculate cost per subscription.")
+        else:
+            st.warning("No creatives meet the impression threshold.")
         st.stop()
 
     # ==============================
@@ -1112,6 +1129,7 @@ if uploaded_file is not None:
     benchmark_total_dpvr = 2.5
     benchmark_total_pr = 0.8
     benchmark_subscriptions = 100.0
+    benchmark_app_subscriptions = 50.0
     benchmark_cost_per_sub = 10.0
     benchmark_ctr_category = 2.2
     benchmark_dpvr_category = 1.8
@@ -1121,6 +1139,7 @@ if uploaded_file is not None:
     benchmark_total_dpvr_category = 3.0
     benchmark_total_pr_category = 1.0
     benchmark_subscriptions_category = 120.0
+    benchmark_app_subscriptions_category = 60.0
     benchmark_cost_per_sub_category = 8.0
 
     # Show benchmark inputs only for current metric if either benchmark is enabled
@@ -1134,17 +1153,18 @@ if uploaded_file is not None:
             "Total_DPVR": "Total DPVR",
             "Total_Purchase_Rate": "Total Purchase Rate",
             "Subscription sign-ups": "Subscription Sign-ups",
+            "App subscription sign-ups": "App Subscription Sign-ups",
             "Cost per subscription": "Cost per Subscription",
         }
-        units = {"CTR": "%", "DPVR": "%", "Purchase_Rate": "%", "Promoted_ROAS": "$", "Total_ROAS": "$", "Total_DPVR": "%", "Total_Purchase_Rate": "%", "Subscription sign-ups": "#", "Cost per subscription": "$"}
-        examples = {"CTR": "2.0", "DPVR": "1.5", "Purchase_Rate": "0.5", "Promoted_ROAS": "4.0", "Total_ROAS": "6.0", "Total_DPVR": "2.5", "Total_Purchase_Rate": "0.8", "Subscription sign-ups": "100", "Cost per subscription": "10.0"}
+        units = {"CTR": "%", "DPVR": "%", "Purchase_Rate": "%", "Promoted_ROAS": "$", "Total_ROAS": "$", "Total_DPVR": "%", "Total_Purchase_Rate": "%", "Subscription sign-ups": "#", "App subscription sign-ups": "#", "Cost per subscription": "$"}
+        examples = {"CTR": "2.0", "DPVR": "1.5", "Purchase_Rate": "0.5", "Promoted_ROAS": "4.0", "Total_ROAS": "6.0", "Total_DPVR": "2.5", "Total_Purchase_Rate": "0.8", "Subscription sign-ups": "100", "App subscription sign-ups": "50", "Cost per subscription": "10.0"}
 
         if metric in benchmark_labels:
             bench_col1, bench_col2 = st.columns([1, 1])
             with bench_col1:
                 if show_advertiser_benchmark:
                     # Adjust max_value based on metric type
-                    max_val = 10000.0 if metric in ["Subscription sign-ups", "Cost per subscription"] else 100.0
+                    max_val = 10000.0 if metric in ["Subscription sign-ups", "App subscription sign-ups", "Cost per subscription"] else 100.0
                     advertiser_benchmark = st.number_input(
                         f"Advertiser Benchmark ({units[metric]})",
                         min_value=0.0,
@@ -1166,12 +1186,13 @@ if uploaded_file is not None:
                 elif metric == "Total_DPVR": benchmark_total_dpvr = advertiser_benchmark or benchmark_total_dpvr
                 elif metric == "Total_Purchase_Rate": benchmark_total_pr = advertiser_benchmark or benchmark_total_pr
                 elif metric == "Subscription sign-ups": benchmark_subscriptions = advertiser_benchmark or benchmark_subscriptions
+                elif metric == "App subscription sign-ups": benchmark_app_subscriptions = advertiser_benchmark or benchmark_app_subscriptions
                 elif metric == "Cost per subscription": benchmark_cost_per_sub = advertiser_benchmark or benchmark_cost_per_sub
             
             with bench_col2:
                 if show_category_benchmark:
                     # Adjust max_value based on metric type
-                    max_val = 10000.0 if metric in ["Subscription sign-ups", "Cost per subscription"] else 100.0
+                    max_val = 10000.0 if metric in ["Subscription sign-ups", "App subscription sign-ups", "Cost per subscription"] else 100.0
                     category_benchmark = st.number_input(
                         f"Category Benchmark ({units[metric]})",
                         min_value=0.0,
@@ -1193,6 +1214,7 @@ if uploaded_file is not None:
                 elif metric == "Total_DPVR": benchmark_total_dpvr_category = category_benchmark or benchmark_total_dpvr_category
                 elif metric == "Total_Purchase_Rate": benchmark_total_pr_category = category_benchmark or benchmark_total_pr_category
                 elif metric == "Subscription sign-ups": benchmark_subscriptions_category = category_benchmark or benchmark_subscriptions_category
+                elif metric == "App subscription sign-ups": benchmark_app_subscriptions_category = category_benchmark or benchmark_app_subscriptions_category
                 elif metric == "Cost per subscription": benchmark_cost_per_sub_category = category_benchmark or benchmark_cost_per_sub_category
 
             # Add a color key for the benchmark lines
@@ -1277,7 +1299,7 @@ if uploaded_file is not None:
         
         # Add benchmark lines if enabled
         if show_advertiser_benchmark:
-            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr, "Subscription sign-ups": benchmark_subscriptions, "Cost per subscription": benchmark_cost_per_sub}
+            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr, "Subscription sign-ups": benchmark_subscriptions, "App subscription sign-ups": benchmark_app_subscriptions, "Cost per subscription": benchmark_cost_per_sub}
             benchmark_value = benchmark_values.get(metric)
             
             if benchmark_value is not None:
@@ -1291,7 +1313,7 @@ if uploaded_file is not None:
                 ))
         
         if show_category_benchmark:
-            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category, "Subscription sign-ups": benchmark_subscriptions_category, "Cost per subscription": benchmark_cost_per_sub_category}
+            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category, "Subscription sign-ups": benchmark_subscriptions_category, "App subscription sign-ups": benchmark_app_subscriptions_category, "Cost per subscription": benchmark_cost_per_sub_category}
             benchmark_value_category = benchmark_values_category.get(metric)
             
             if benchmark_value_category is not None:
@@ -1367,7 +1389,7 @@ if uploaded_file is not None:
         
         # Add benchmark lines if enabled (for charts without order performance)
         if show_advertiser_benchmark:
-            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr, "Subscription sign-ups": benchmark_subscriptions, "Cost per subscription": benchmark_cost_per_sub}
+            benchmark_values = {"CTR": benchmark_ctr, "DPVR": benchmark_dpvr, "Purchase_Rate": benchmark_pr, "Promoted_ROAS": benchmark_promoted, "Total_ROAS": benchmark_total, "Total_DPVR": benchmark_total_dpvr, "Total_Purchase_Rate": benchmark_total_pr, "Subscription sign-ups": benchmark_subscriptions, "App subscription sign-ups": benchmark_app_subscriptions, "Cost per subscription": benchmark_cost_per_sub}
             benchmark_value = benchmark_values.get(metric)
             
             if benchmark_value is not None:
@@ -1381,7 +1403,7 @@ if uploaded_file is not None:
                 ))
         
         if show_category_benchmark:
-            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category, "Subscription sign-ups": benchmark_subscriptions_category, "Cost per subscription": benchmark_cost_per_sub_category}
+            benchmark_values_category = {"CTR": benchmark_ctr_category, "DPVR": benchmark_dpvr_category, "Purchase_Rate": benchmark_pr_category, "Promoted_ROAS": benchmark_promoted_category, "Total_ROAS": benchmark_total_category, "Total_DPVR": benchmark_total_dpvr_category, "Total_Purchase_Rate": benchmark_total_pr_category, "Subscription sign-ups": benchmark_subscriptions_category, "App subscription sign-ups": benchmark_app_subscriptions_category, "Cost per subscription": benchmark_cost_per_sub_category}
             benchmark_value_category = benchmark_values_category.get(metric)
             
             if benchmark_value_category is not None:
@@ -1674,6 +1696,11 @@ if uploaded_file is not None:
         disp_cols.append("Total_Purchases")
     if "Total_Purchase_Rate" in table_df.columns:
         disp_cols.append("Total_Purchase_Rate")
+    # Add subscription columns if present
+    if "Subscription sign-ups" in table_df.columns:
+        disp_cols.append("Subscription sign-ups")
+    if "App subscription sign-ups" in table_df.columns:
+        disp_cols.append("App subscription sign-ups")
 
     # Add editable creative identifier functionality
     st.markdown("**💡 Tip:** Click on any Creative Identifier below to edit it. Changes will automatically update the chart, filters, and image captions.")
@@ -1781,6 +1808,7 @@ if uploaded_file is not None:
         "Promoted_ROAS": "${:.2f}", "Total_ROAS": "${:.2f}",
         "Total_DPV": "{:,.0f}", "Total_Purchases": "{:,.0f}",
         "Total_DPVR": "{:.4f}%", "Total_Purchase_Rate": "{:.4f}%",
+        "Subscription sign-ups": "{:,.0f}", "App subscription sign-ups": "{:,.0f}",
     }
     
     # Style the table with totals row highlighted
