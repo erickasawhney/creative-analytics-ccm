@@ -1061,7 +1061,6 @@ if uploaded_file is not None:
     if prev_total != total_creatives:
         st.session_state["prev_total_creatives"] = total_creatives
         num_to_show = default_num_to_show
-        st.session_state["num_to_show_slider"] = default_num_to_show
     else:
         num_to_show = st.session_state.get("num_to_show_slider", default_num_to_show)
     bar_width = st.session_state.get("bar_width_slider", 0.8)
@@ -1365,7 +1364,7 @@ if uploaded_file is not None:
             fig.update_layout(
                 xaxis_title="", yaxis_title=metric, xaxis_tickangle=45,
                 showlegend=True, legend_title="Filter", margin=dict(b=160),
-                xaxis={'categoryorder': category_order}
+                xaxis={'categoryorder': category_order, 'tickfont': {'size': 16}}
             )
         else:
             fig = px.bar(
@@ -1380,7 +1379,7 @@ if uploaded_file is not None:
             fig.update_layout(
                 xaxis_title="", yaxis_title=metric, xaxis_tickangle=45,
                 showlegend=False, margin=dict(b=160),
-                xaxis={'categoryorder': category_order}
+                xaxis={'categoryorder': category_order, 'tickfont': {'size': 16}}
             )
 
         fig.update_traces(
@@ -1466,16 +1465,18 @@ if uploaded_file is not None:
                     # Display image with manual or adaptive sizing
                     if use_manual_size:
                         # Manual size control: all images same width
-                        st.image(img, width=image_width, caption=cap)
+                        st.image(img, width=image_width)
                     else:
                         # Adaptive sizing based on number of creatives
                         if actual_creatives_shown <= 3:
                             # For few images, use larger width setting to maximize space usage
-                            st.image(img, use_container_width=True, caption=cap, width=None)
+                            st.image(img, use_container_width=True, width=None)
                         else:
-                            st.image(img, use_container_width=True, caption=cap)
+                            st.image(img, use_container_width=True)
+                    # Display caption with larger font
+                    st.markdown(f"<p style='text-align: center; font-size: 16px;'>{cap}</p>", unsafe_allow_html=True)
                 else:
-                    st.markdown(f"**{cap}**")
+                    st.markdown(f"<p style='text-align: center; font-size: 16px;'><strong>{cap}</strong></p>", unsafe_allow_html=True)
                     st.write("*No image available*")
     
 
