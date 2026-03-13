@@ -909,7 +909,9 @@ if uploaded_file is not None:
     }
     # Order metric_options alphabetically by their user-friendly label
     metric_options = sorted(metric_options, key=lambda x: metric_labels.get(x, x))
-    metric = st.selectbox("Sort by KPI", metric_options, index=0, key="metric_filter", format_func=lambda x: metric_labels.get(x, x))
+    # Set CTR as the default metric
+    default_index = metric_options.index("CTR") if "CTR" in metric_options else 0
+    metric = st.selectbox("Sort by KPI", metric_options, index=default_index, key="metric_filter", format_func=lambda x: metric_labels.get(x, x))
     with col3:
         min_imps = st.number_input("Min Imps", min_value=0, value=100, step=50, key="min_imps_filter")
     if has_size_col:
