@@ -1065,6 +1065,7 @@ if uploaded_file is not None:
         num_to_show = st.session_state.get("num_to_show_slider", default_num_to_show)
     bar_width = st.session_state.get("bar_width_slider", 0.8)
     bar_color = st.session_state.get("bar_color_picker", "#1f77b4")
+    text_size = st.session_state.get("text_size_slider", 16)
     
     # Handle case where total_creatives is 1
     if total_creatives == 1:
@@ -1364,7 +1365,7 @@ if uploaded_file is not None:
             fig.update_layout(
                 xaxis_title="", yaxis_title=metric, xaxis_tickangle=45,
                 showlegend=True, legend_title="Filter", margin=dict(b=160),
-                xaxis={'categoryorder': category_order, 'tickfont': {'size': 16}}
+                xaxis={'categoryorder': category_order, 'tickfont': {'size': text_size}}
             )
         else:
             fig = px.bar(
@@ -1379,7 +1380,7 @@ if uploaded_file is not None:
             fig.update_layout(
                 xaxis_title="", yaxis_title=metric, xaxis_tickangle=45,
                 showlegend=False, margin=dict(b=160),
-                xaxis={'categoryorder': category_order, 'tickfont': {'size': 16}}
+                xaxis={'categoryorder': category_order, 'tickfont': {'size': text_size}}
             )
 
         fig.update_traces(
@@ -1525,6 +1526,20 @@ if uploaded_file is not None:
             value=bar_color,
             help="Choose the primary color for the bars",
             key="bar_color_picker"
+        )
+    
+    st.markdown("**Text Size**")
+    col1, col2, col3 = st.columns([1, 1, 1])
+    
+    with col1:
+        text_size_new = st.slider(
+            "X-Axis Label Size",
+            min_value=8,
+            max_value=24,
+            value=text_size,
+            step=1,
+            help="Adjust the font size of creative names under the chart",
+            key="text_size_slider"
         )
     
     # Image controls
