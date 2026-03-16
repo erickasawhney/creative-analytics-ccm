@@ -1521,12 +1521,23 @@ if uploaded_file is not None:
         )
     
     with col3:
-        bar_color_new = st.color_picker(
-            "Bar Color", 
-            value=bar_color,
-            help="Choose the primary color for the bars",
-            key="bar_color_picker"
-        )
+        st.markdown("**Bar Color**")
+        # Create sub-columns for color picker and button side by side
+        subcol1, subcol2, subcol3 = st.columns([0.12, 0.22, 0.66])
+        with subcol1:
+            # Store temporary color selection
+            temp_color = st.color_picker(
+                "Select color", 
+                value=bar_color,
+                help="Click the colored box to open the color picker",
+                key="temp_bar_color_picker"
+            )
+        with subcol2:
+            # Apply Color button - positioned to the right of color picker
+            if st.button("Apply Color", key="apply_color_btn", help="Click to apply the selected color to the chart"):
+                st.session_state["bar_color_picker"] = temp_color
+                st.rerun()
+        bar_color_new = st.session_state.get("bar_color_picker", bar_color)
     
     st.markdown("**Text Size**")
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -1567,13 +1578,10 @@ if uploaded_file is not None:
             )
         else:
             image_width = None
-            st.write("*Using automatic sizing*")
     
     with col3:
         if use_manual_size:
             st.write(f"All images: **{image_width}px** wide")
-        else:
-            st.write("*Adaptive sizing enabled*")
 
     # Tip for users about automatic updates
     if num_to_show_new != num_to_show or bar_width_new != bar_width or bar_color_new != bar_color or use_manual_size:
