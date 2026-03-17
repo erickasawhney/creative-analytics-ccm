@@ -377,8 +377,8 @@ def process_campaign_data(df):
         app_subscription_col = find_column(df, ["app subscription sign-ups", "app subscription signups", "app subscription sign ups", "app subscriptions"])
 
         # Detect start/end date columns (common names). Keep as Start_Date / End_Date
-        start_col = find_column(df, ["line item start date", "start date", "start_date", "line_item_start_date", "start"])
-        end_col = find_column(df, ["line item end date", "end date", "end_date", "line_item_end_date", "end"])
+        start_col = find_column(df, ["interval start", "interval_start", "line item start date", "start date", "start_date", "line_item_start_date", "start"])
+        end_col = find_column(df, ["interval end", "interval_end", "line item end date", "end date", "end_date", "line_item_end_date", "end"])
 
         rename_map = {}
         if creative_col: rename_map[creative_col] = "Creative"
@@ -670,14 +670,12 @@ with col1:
 with col2:
     st.markdown("<br>", unsafe_allow_html=True)
     st.caption("*ensure you have added all columns in DSP")
-
 uploaded_images = st.file_uploader(
     "Upload images – ensure file name includes creative identifier/name - RECOMMEND ALL SAME SIZE",
     type=["png", "jpg", "jpeg"],
     accept_multiple_files=True,
     key="imgs"
 )
-
 st.markdown("---")
 
 # ==============================
@@ -808,30 +806,26 @@ if uploaded_file is not None:
             order_options.append(display_label)
 
     # ==============================
-    # GRAPH DATA FILTERS
+    # CREATIVE ANALYSIS
     # ==============================
-    st.markdown("### 🎯 GRAPH DATA FILERS")
-    st.markdown("Configure data filters, sorting, and chart overlays.")
+    st.markdown("---")
+    st.subheader("🎯 CREATIVE PERFORMANCE")
+    st.markdown("Visualize creative performance from top to lowest performing by KPI. Configure filters below to customize your view.")
+    
+    st.markdown("**Creative Performance Filters**")
+    
+    # Check if date columns exist for time period filtering
+    has_date_cols = "Start_Date" in processed.columns and "End_Date" in processed.columns
     
     # Main filters in a compact 3-column layout with smaller fields
-    # Support both 'size' and 'ad size' columns (case-insensitive)
+    # Support both 'size' and 'ad size' columns (case-insensitive) - for size performance chart only
     size_col_candidates = [col for col in processed.columns if col.lower() in ("size", "ad size")]
     has_size_col = processed is not None and bool(size_col_candidates)
     size_col = None
-    size_options = []
     if has_size_col:
         size_col = size_col_candidates[0]
-        size_options = sorted(processed[size_col].dropna().unique())
-    # Add 'All Sizes' option
-    if size_options:
-        size_options_display = ["All Sizes"] + list(size_options)
-    else:
-        size_options_display = []
 
-    if has_size_col:
-        col1, col2, col3, col4 = st.columns([1.5, 1.2, 1, 1])
-    else:
-        col1, col2, col3 = st.columns([1.8, 1.2, 1])
+    col1, col2, col3 = st.columns([2.0, 0.9, 1])
 
     with col1:
         # Add tooltips for order options
@@ -914,20 +908,66 @@ if uploaded_file is not None:
     metric = st.selectbox("Sort by KPI", metric_options, index=default_index, key="metric_filter", format_func=lambda x: metric_labels.get(x, x))
     with col3:
         min_imps = st.number_input("Min Imps", min_value=0, value=100, step=50, key="min_imps_filter")
-    if has_size_col:
-        with col4:
-            # Only set default to ["All Sizes"] if it's in the options, else use []
-            default_size = ["All Sizes"] if "All Sizes" in size_options_display else []
-            selected_sizes = st.multiselect("Size", options=size_options_display, default=default_size, key="size_filter")
 
+    # Time period filter (if date columns exist)
+    if has_date_cols:
+        col1, col2, col3 = st.columns([1.0, 1.0, 1.9])
+        
+        # Get min and max dates from the data
+        min_date = processed["Start_Date"].min()
+        max_date = processed["End_Date"].max()
+        
+        # Handle NaT (missing dates)
+        if pd.isna(min_date) or pd.isna(max_date):
+            st.info("⚠️ Some date values are missing in the data. Showing all data.")
+            filter_start_date = None
+            filter_end_date = None
+        else:
+            with col1:
+                filter_start_date = st.date_input(
+                    "From Date",
+                    value=min_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    key="start_date_filter",
+                    help="Filter ads that were live on or after this date"
+                )
+            with col2:
+                filter_end_date = st.date_input(
+                    "To Date",
+                    value=max_date,
+                    min_value=min_date,
+                    max_value=max_date,
+                    key="end_date_filter",
+                    help="Filter ads that were live on or before this date"
+                )
+            with col3:
+                st.write("")
+                if st.button("Reset Dates", key="reset_dates"):
+                    st.session_state.start_date_filter = min_date
+                    st.session_state.end_date_filter = max_date
+                    try:
+                        st.rerun()
+                    except AttributeError:
+                        st.experimental_rerun()
+    
     # Apply filters BEFORE aggregation
     filtered_processed = processed.copy()
+    
+    # Apply date filter if dates are selected
+    if has_date_cols and 'filter_start_date' in locals() and 'filter_end_date' in locals() and filter_start_date and filter_end_date:
+        # Filter for ads where the interval overlaps with the selected date range
+        # An ad is included if: (ad_start <= filter_end) AND (ad_end >= filter_start)
+        filter_start_dt = pd.Timestamp(filter_start_date)
+        filter_end_dt = pd.Timestamp(filter_end_date)
+        
+        filtered_processed = filtered_processed[
+            (filtered_processed["Start_Date"] <= filter_end_dt) & 
+            (filtered_processed["End_Date"] >= filter_start_dt)
+        ]
+    
     if min_imps > 0:
         filtered_processed = filtered_processed[filtered_processed["Impressions"] >= min_imps]
-    if has_size_col and 'selected_sizes' in locals() and size_col:
-        # If 'All Sizes' is not selected, filter by selected sizes
-        if "All Sizes" not in selected_sizes:
-            filtered_processed = filtered_processed[filtered_processed[size_col].isin(selected_sizes)]
 
     # ...existing code...
 
@@ -967,6 +1007,26 @@ if uploaded_file is not None:
         )
         if "Select All" in identifier_filter:
             identifier_filter = identifier_options[1:]  # All except 'Select All'
+
+    # Chart overlay controls
+    st.markdown("**Chart Overlays**")
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col1:
+        show_advertiser_benchmark = st.checkbox(
+            "Overlay Advertiser Benchmark",
+            value=False,
+            help="Show advertiser benchmark line",
+            key="show_advertiser_benchmark"
+        )
+    with col2:
+        show_category_benchmark = st.checkbox(
+            "Overlay Category Benchmark",
+            value=False,
+            help="Show category benchmark line",
+            key="show_category_benchmark"
+        )
+    with col3:
+        pass
 
     st.markdown("---")
 
@@ -1085,43 +1145,23 @@ if uploaded_file is not None:
             st.info("**Only 1 creative matches your filters.** Please add more creative identifiers to compare performance.")
         chart_df = sorted_df.copy()
         if metric == "Cost per subscription":
-            title = f"**TOP CREATIVES by lowest {metric}**"
+            title = f"**Top Creatives by lowest {metric}**"
         else:
-            title = f"**TOP CREATIVES BY {metric}**"
+            title = f"**Top Creatives by {metric}**"
     else:
         chart_df = sorted_df.head(num_to_show).copy()
         if metric == "Cost per subscription":
-            title = f"TOP CREATIVES by lowest {metric}"
+            title = f"Top Creatives by lowest {metric}"
         else:
-            title = f"TOP CREATIVES BY {metric}"
+            title = f"Top Creatives by {metric}"
 
     # Use wrapped labels for the chart's x-axis so long creative names don't get visually cut off.
     # Use edited names if available
     chart_df["Label"] = chart_df["Group_Key"].apply(lambda s: _wrap_into_html(get_display_name(s), width=25))
-    # Do not append selected orders to the chart title; keep title concise.
-    if min_imps > 0:
-        title += f" (≥{min_imps:,} imps)"
     # Wrap the title as markdown so long titles will wrap onto multiple lines instead of being cut off
     wrapped_title = _wrap_into_html(title, width=80)
-    st.markdown(f"### {wrapped_title}", unsafe_allow_html=True)
+    st.markdown(f"<h3 style='text-align: center;'>{wrapped_title}</h3>", unsafe_allow_html=True)
     
-    # Overlay controls right under chart header
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col1:
-        show_advertiser_benchmark = st.checkbox(
-            "Overlay Advertiser Benchmark",
-            value=False,
-            help="Show advertiser benchmark line"
-        )
-    with col2:
-        show_category_benchmark = st.checkbox(
-            "Overlay Category Benchmark",
-            value=False,
-            help="Show category benchmark line"
-        )
-    with col3:
-        pass
-
     # Default benchmark values
     benchmark_ctr = 2.0
     benchmark_dpvr = 1.5
@@ -1536,7 +1576,11 @@ if uploaded_file is not None:
             # Apply Color button - positioned to the right of color picker
             if st.button("Apply Color", key="apply_color_btn", help="Click to apply the selected color to the chart"):
                 st.session_state["bar_color_picker"] = temp_color
-                st.rerun()
+                try:
+                    st.rerun()
+                except AttributeError:
+                    # For older Streamlit versions
+                    st.experimental_rerun()
         bar_color_new = st.session_state.get("bar_color_picker", bar_color)
     
     st.markdown("**Text Size**")
@@ -1586,6 +1630,467 @@ if uploaded_file is not None:
     # Tip for users about automatic updates
     if num_to_show_new != num_to_show or bar_width_new != bar_width or bar_color_new != bar_color or use_manual_size:
         st.info("💡 **Tip:** The chart and images above will update automatically as you adjust these settings. Scroll up to see the changes!")
+
+    # ==============================
+    # AD SIZE PERFORMANCE CHART
+    # ==============================
+    if has_size_col and size_col:
+        st.markdown("---")
+        st.subheader("📊 AD SIZE PERFORMANCE")
+        st.markdown("Compare performance across different ad sizes.")
+        
+        # Dedicated filters for size analysis
+        st.markdown("**Size Analysis Filters**")
+        col1, col2, col3 = st.columns([2.0, 0.9, 1.1])
+        
+        with col1:
+            # Order filter for size analysis
+            size_selected_orders_display = st.multiselect(
+                "Order",
+                options=order_options,
+                default=["All Orders"],
+                key="size_order_filter",
+                help="Filter by order name or campaign ID for size analysis"
+            )
+            
+            # Extract actual order names
+            size_selected_orders = []
+            for display_label in size_selected_orders_display:
+                if display_label == "All Orders":
+                    size_selected_orders.append("All Orders")
+                elif " (ID: " in display_label:
+                    order_name = display_label.split(" (ID: ")[0]
+                    size_selected_orders.append(order_name)
+                else:
+                    size_selected_orders.append(display_label)
+        
+        with col2:
+            # Metric selection for size analysis
+            size_metric = st.selectbox(
+                "Sort by KPI",
+                metric_options,
+                index=default_index,
+                key="size_metric_filter",
+                format_func=lambda x: metric_labels.get(x, x)
+            )
+        
+        with col3:
+            # Reset button for size filters
+            if st.button("Reset Size Filters", key="reset_size_filters"):
+                st.session_state.size_order_filter = ["All Orders"]
+                st.session_state.size_metric_filter = "CTR"
+                if has_date_cols:
+                    st.session_state.size_start_date_filter = processed["Start_Date"].min()
+                    st.session_state.size_end_date_filter = processed["End_Date"].max()
+                try:
+                    st.rerun()
+                except AttributeError:
+                    st.experimental_rerun()
+        
+        # Time period filter for size analysis (if date columns exist)
+        if has_date_cols:
+            col1, col2 = st.columns([1.0, 1.0])
+            
+            min_date = processed["Start_Date"].min()
+            max_date = processed["End_Date"].max()
+            
+            if not pd.isna(min_date) and not pd.isna(max_date):
+                with col1:
+                    size_filter_start_date = st.date_input(
+                        "From Date",
+                        value=min_date,
+                        min_value=min_date,
+                        max_value=max_date,
+                        key="size_start_date_filter",
+                        help="Filter ads that were live on or after this date"
+                    )
+                with col2:
+                    size_filter_end_date = st.date_input(
+                        "To Date",
+                        value=max_date,
+                        min_value=min_date,
+                        max_value=max_date,
+                        key="size_end_date_filter",
+                        help="Filter ads that were live on or before this date"
+                    )
+            else:
+                size_filter_start_date = None
+                size_filter_end_date = None
+        
+        # Apply size-specific filters
+        size_filtered_data = processed.copy()
+        
+        # Apply order filter
+        if "All Orders" not in size_selected_orders:
+            if "Order_ID" in size_filtered_data.columns:
+                size_filtered_data = size_filtered_data[size_filtered_data["Order_ID"].isin(size_selected_orders)]
+        
+        # Apply date filter
+        if has_date_cols and 'size_filter_start_date' in locals() and 'size_filter_end_date' in locals() and size_filter_start_date and size_filter_end_date:
+            size_filter_start_dt = pd.Timestamp(size_filter_start_date)
+            size_filter_end_dt = pd.Timestamp(size_filter_end_date)
+            
+            size_filtered_data = size_filtered_data[
+                (size_filtered_data["Start_Date"] <= size_filter_end_dt) & 
+                (size_filtered_data["End_Date"] >= size_filter_start_dt)
+            ]
+        
+        # Aggregate by size
+        size_agg = size_filtered_data.groupby(size_col).agg({
+            "Impressions": "sum",
+            "Click-throughs": "sum",
+            "DPV": "sum",
+            "Purchases": "sum"
+        }).reset_index()
+        
+        # Calculate metrics
+        size_agg["CTR"] = (size_agg["Click-throughs"] / size_agg["Impressions"]).fillna(0)
+        size_agg["DPVR"] = (size_agg["DPV"] / size_agg["Impressions"]).fillna(0)
+        size_agg["Purchase_Rate"] = (size_agg["Purchases"] / size_agg["Impressions"]).fillna(0)
+        
+        # Add ROAS if available
+        if "Sales_USD" in size_filtered_data.columns and "Total_Cost" in size_filtered_data.columns:
+            size_roas_agg = size_filtered_data.groupby(size_col).agg({
+                "Sales_USD": "sum",
+                "Total_Cost": "sum"
+            }).reset_index()
+            size_agg = size_agg.merge(size_roas_agg, on=size_col, how="left")
+            size_agg["Promoted_ROAS"] = (size_agg["Sales_USD"] / size_agg["Total_Cost"]).fillna(0)
+        
+        if "Total_Sales_USD" in size_filtered_data.columns and "Total_Cost" in size_filtered_data.columns:
+            size_total_roas_agg = size_filtered_data.groupby(size_col).agg({
+                "Total_Sales_USD": "sum",
+                "Total_Cost": "sum"
+            }).reset_index()
+            size_agg = size_agg.merge(size_total_roas_agg, on=size_col, how="left", suffixes=('', '_y'))
+            # Use Total_Cost from the merge if it exists, otherwise keep the original
+            if "Total_Cost_y" in size_agg.columns:
+                size_agg["Total_Cost"] = size_agg["Total_Cost"].fillna(size_agg["Total_Cost_y"])
+                size_agg = size_agg.drop(columns=["Total_Cost_y"])
+            size_agg["Total_ROAS"] = (size_agg["Total_Sales_USD"] / size_agg["Total_Cost"]).fillna(0)
+        
+        # Add Total DPVR and Total Purchase Rate if available
+        if "Total_DPV" in size_filtered_data.columns:
+            size_total_dpv_agg = size_filtered_data.groupby(size_col).agg({"Total_DPV": "sum"}).reset_index()
+            size_agg = size_agg.merge(size_total_dpv_agg, on=size_col, how="left")
+            size_agg["Total_DPVR"] = (size_agg["Total_DPV"] / size_agg["Impressions"]).fillna(0)
+        
+        if "Total_Purchases" in size_filtered_data.columns:
+            size_total_purch_agg = size_filtered_data.groupby(size_col).agg({"Total_Purchases": "sum"}).reset_index()
+            size_agg = size_agg.merge(size_total_purch_agg, on=size_col, how="left")
+            size_agg["Total_Purchase_Rate"] = (size_agg["Total_Purchases"] / size_agg["Impressions"]).fillna(0)
+        
+        # Sort by selected metric for size analysis
+        if size_metric in size_agg.columns:
+            size_agg = size_agg.sort_values(by=size_metric, ascending=False)
+        
+        # Create size performance chart
+        if not size_agg.empty and size_metric in size_agg.columns:
+            fig_size = px.bar(
+                size_agg,
+                x=size_col,
+                y=size_metric,
+                text=size_metric,
+                color_discrete_sequence=[bar_color],
+                height=400
+            )
+            
+            # Format text based on metric type
+            if size_metric in ["CTR", "DPVR", "Purchase_Rate", "Total_DPVR", "Total_Purchase_Rate"]:
+                text_template = "%{y:.4f}"
+            else:
+                text_template = "%{y:.2f}"
+            
+            fig_size.update_traces(
+                texttemplate=text_template,
+                textposition="outside"
+            )
+            
+            fig_size.update_layout(
+                title="",
+                xaxis_title="Ad Size",
+                yaxis_title=metric_labels.get(size_metric, size_metric),
+                xaxis_tickangle=45,
+                showlegend=False,
+                margin=dict(b=100, t=40)
+            )
+            
+            st.plotly_chart(fig_size, use_container_width=True)
+            
+            # Show size summary table
+            st.markdown("**Size Performance Summary**")
+            size_display = size_agg.copy()
+            # Format percentages (multiply by 100 for display)
+            size_display["CTR"] = (size_display["CTR"] * 100).map("{:.4f}%".format)
+            size_display["DPVR"] = (size_display["DPVR"] * 100).map("{:.4f}%".format)
+            size_display["Purchase_Rate"] = (size_display["Purchase_Rate"] * 100).map("{:.4f}%".format)
+            # Format numbers with commas
+            size_display["Impressions"] = size_display["Impressions"].map("{:,.0f}".format)
+            size_display["Click-throughs"] = size_display["Click-throughs"].map("{:,.0f}".format)
+            size_display["DPV"] = size_display["DPV"].map("{:,.0f}".format)
+            size_display["Purchases"] = size_display["Purchases"].map("{:,.0f}".format)
+            
+            display_cols = [size_col, "Impressions", "Click-throughs", "CTR", "DPV", "DPVR", "Purchases", "Purchase_Rate"]
+            if "Promoted_ROAS" in size_display.columns:
+                size_display["Promoted_ROAS"] = size_display["Promoted_ROAS"].map("${:.2f}".format)
+                display_cols.append("Promoted_ROAS")
+            if "Total_ROAS" in size_display.columns:
+                size_display["Total_ROAS"] = size_display["Total_ROAS"].map("${:.2f}".format)
+                display_cols.append("Total_ROAS")
+            if "Total_DPVR" in size_display.columns:
+                size_display["Total_DPVR"] = (size_display["Total_DPVR"] * 100).map("{:.4f}%".format)
+                display_cols.append("Total_DPVR")
+            if "Total_Purchase_Rate" in size_display.columns:
+                size_display["Total_Purchase_Rate"] = (size_display["Total_Purchase_Rate"] * 100).map("{:.4f}%".format)
+                display_cols.append("Total_Purchase_Rate")
+            
+            # Filter to only show columns that exist
+            display_cols = [col for col in display_cols if col in size_display.columns]
+            st.dataframe(size_display[display_cols], use_container_width=True, hide_index=True)
+        else:
+            st.info("ℹ️ No size data available with current filters.")
+
+    # ==============================
+    # ORDER PERFORMANCE CHART
+    # ==============================
+    if "Order_ID" in processed.columns:
+        st.markdown("---")
+        st.subheader("📈 ORDER PERFORMANCE")
+        st.markdown("Compare performance across different orders/campaigns.")
+        
+        # Dedicated filters for order analysis
+        st.markdown("**Order Analysis Filters**")
+        col1, col2 = st.columns([2.1, 0.9])
+        
+        with col1:
+            # Order filter for order analysis - select which orders to include
+            order_analysis_selected_orders_display = st.multiselect(
+                "Orders to Compare",
+                options=order_options,
+                default=["All Orders"],  # Default to all orders
+                key="order_analysis_order_filter",
+                help="Select which orders to include in the comparison"
+            )
+            
+            # Extract actual order names
+            order_analysis_selected_orders = []
+            for display_label in order_analysis_selected_orders_display:
+                if display_label == "All Orders":
+                    order_analysis_selected_orders.append("All Orders")
+                elif " (ID: " in display_label:
+                    order_name = display_label.split(" (ID: ")[0]
+                    order_analysis_selected_orders.append(order_name)
+                else:
+                    order_analysis_selected_orders.append(display_label)
+        
+        with col2:
+            # Metric selection for order analysis
+            order_metric = st.selectbox(
+                "Sort by KPI",
+                metric_options,
+                index=default_index,
+                key="order_metric_filter",
+                format_func=lambda x: metric_labels.get(x, x)
+            )
+        
+        # Reset button on its own row
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col1:
+            if st.button("Reset Order Filters", key="reset_order_filters"):
+                st.session_state.order_analysis_order_filter = ["All Orders"]
+                st.session_state.order_metric_filter = "CTR"
+                if has_date_cols:
+                    st.session_state.order_start_date_filter = processed["Start_Date"].min()
+                    st.session_state.order_end_date_filter = processed["End_Date"].max()
+                try:
+                    st.rerun()
+                except AttributeError:
+                    st.experimental_rerun()
+        
+        # Time period filter for order analysis (if date columns exist)
+        if has_date_cols:
+            col1, col2 = st.columns([1.0, 1.0])
+            
+            min_date = processed["Start_Date"].min()
+            max_date = processed["End_Date"].max()
+            
+            if not pd.isna(min_date) and not pd.isna(max_date):
+                with col1:
+                    order_filter_start_date = st.date_input(
+                        "From Date",
+                        value=min_date,
+                        min_value=min_date,
+                        max_value=max_date,
+                        key="order_start_date_filter",
+                        help="Filter data from this date"
+                    )
+                with col2:
+                    order_filter_end_date = st.date_input(
+                        "To Date",
+                        value=max_date,
+                        min_value=min_date,
+                        max_value=max_date,
+                        key="order_end_date_filter",
+                        help="Filter data to this date"
+                    )
+            else:
+                order_filter_start_date = None
+                order_filter_end_date = None
+        
+        # Apply order-specific filters
+        order_filtered_data = processed.copy()
+        
+        # Apply date filter
+        if has_date_cols and 'order_filter_start_date' in locals() and 'order_filter_end_date' in locals() and order_filter_start_date and order_filter_end_date:
+            order_filter_start_dt = pd.Timestamp(order_filter_start_date)
+            order_filter_end_dt = pd.Timestamp(order_filter_end_date)
+            
+            order_filtered_data = order_filtered_data[
+                (order_filtered_data["Start_Date"] <= order_filter_end_dt) & 
+                (order_filtered_data["End_Date"] >= order_filter_start_dt)
+            ]
+        
+        # Filter out empty Order_IDs
+        order_filtered_data = order_filtered_data[order_filtered_data["Order_ID"].notna() & (order_filtered_data["Order_ID"] != "")]
+        
+        # Apply order selection filter
+        if "All Orders" not in order_analysis_selected_orders:
+            order_filtered_data = order_filtered_data[order_filtered_data["Order_ID"].isin(order_analysis_selected_orders)]
+        
+        # Aggregate by order
+        order_agg = order_filtered_data.groupby("Order_ID").agg({
+            "Impressions": "sum",
+            "Click-throughs": "sum",
+            "DPV": "sum",
+            "Purchases": "sum"
+        }).reset_index()
+        
+        # Calculate metrics
+        order_agg["CTR"] = (order_agg["Click-throughs"] / order_agg["Impressions"]).fillna(0)
+        order_agg["DPVR"] = (order_agg["DPV"] / order_agg["Impressions"]).fillna(0)
+        order_agg["Purchase_Rate"] = (order_agg["Purchases"] / order_agg["Impressions"]).fillna(0)
+        
+        # Add ROAS if available
+        if "Sales_USD" in order_filtered_data.columns and "Total_Cost" in order_filtered_data.columns:
+            order_roas_agg = order_filtered_data.groupby("Order_ID").agg({
+                "Sales_USD": "sum",
+                "Total_Cost": "sum"
+            }).reset_index()
+            order_agg = order_agg.merge(order_roas_agg, on="Order_ID", how="left")
+            order_agg["Promoted_ROAS"] = (order_agg["Sales_USD"] / order_agg["Total_Cost"]).fillna(0)
+        
+        if "Total_Sales_USD" in order_filtered_data.columns and "Total_Cost" in order_filtered_data.columns:
+            order_total_roas_agg = order_filtered_data.groupby("Order_ID").agg({
+                "Total_Sales_USD": "sum",
+                "Total_Cost": "sum"
+            }).reset_index()
+            order_agg = order_agg.merge(order_total_roas_agg, on="Order_ID", how="left", suffixes=('', '_y'))
+            # Use Total_Cost from the merge if it exists, otherwise keep the original
+            if "Total_Cost_y" in order_agg.columns:
+                order_agg["Total_Cost"] = order_agg["Total_Cost"].fillna(order_agg["Total_Cost_y"])
+                order_agg = order_agg.drop(columns=["Total_Cost_y"])
+            order_agg["Total_ROAS"] = (order_agg["Total_Sales_USD"] / order_agg["Total_Cost"]).fillna(0)
+        
+        # Add Total DPVR and Total Purchase Rate if available
+        if "Total_DPV" in order_filtered_data.columns:
+            order_total_dpv_agg = order_filtered_data.groupby("Order_ID").agg({"Total_DPV": "sum"}).reset_index()
+            order_agg = order_agg.merge(order_total_dpv_agg, on="Order_ID", how="left")
+            order_agg["Total_DPVR"] = (order_agg["Total_DPV"] / order_agg["Impressions"]).fillna(0)
+        
+        if "Total_Purchases" in order_filtered_data.columns:
+            order_total_purch_agg = order_filtered_data.groupby("Order_ID").agg({"Total_Purchases": "sum"}).reset_index()
+            order_agg = order_agg.merge(order_total_purch_agg, on="Order_ID", how="left")
+            order_agg["Total_Purchase_Rate"] = (order_agg["Total_Purchases"] / order_agg["Impressions"]).fillna(0)
+        
+        # Remove any potential duplicates and sort by selected metric
+        order_agg = order_agg.drop_duplicates(subset=['Order_ID']).reset_index(drop=True)
+        
+        if order_metric in order_agg.columns:
+            order_agg = order_agg.sort_values(by=order_metric, ascending=False).reset_index(drop=True)
+        
+        # Create order performance chart
+        if not order_agg.empty and order_metric in order_agg.columns:
+            # Truncate long order names for display
+            order_agg["Order_Display"] = order_agg["Order_ID"].apply(lambda x: x[:50] + "..." if len(str(x)) > 50 else str(x))
+            
+            # If truncation created duplicates, make display names unique by adding suffixes
+            duplicate_count = order_agg.duplicated(subset=['Order_Display']).sum()
+            if duplicate_count > 0:
+                # Add numeric suffix to duplicates to make them unique
+                display_counts = {}
+                unique_displays = []
+                for display in order_agg['Order_Display']:
+                    if display in display_counts:
+                        display_counts[display] += 1
+                        unique_displays.append(f"{display} ({display_counts[display]})")
+                    else:
+                        display_counts[display] = 1
+                        unique_displays.append(display)
+                order_agg['Order_Display'] = unique_displays
+            
+            # Format text based on metric type
+            if order_metric in ["CTR", "DPVR", "Purchase_Rate", "Total_DPVR", "Total_Purchase_Rate"]:
+                text_template = "%{y:.4f}"
+            else:
+                text_template = "%{y:.2f}"
+            
+            # Create figure with go.Bar for explicit control
+            fig_order = go.Figure()
+            fig_order.add_trace(go.Bar(
+                x=order_agg["Order_Display"],
+                y=order_agg[order_metric],
+                text=order_agg[order_metric].round(4 if order_metric in ["CTR", "DPVR", "Purchase_Rate", "Total_DPVR", "Total_Purchase_Rate"] else 2),
+                texttemplate=text_template,
+                textposition="outside",
+                marker=dict(color=bar_color),
+                hovertemplate="<b>%{x}</b><br>" + metric_labels.get(order_metric, order_metric) + ": " + text_template + "<extra></extra>",
+                name=""
+            ))
+            
+            fig_order.update_layout(
+                title="",
+                xaxis_title="Order / Campaign",
+                yaxis_title=metric_labels.get(order_metric, order_metric),
+                xaxis_tickangle=45,
+                showlegend=False,
+                margin=dict(b=150, t=40),
+                height=400
+            )
+            
+            st.plotly_chart(fig_order, use_container_width=True)
+            
+            # Show order summary table
+            st.markdown("**Order Performance Summary**")
+            order_display = order_agg.copy()
+            # Format percentages (multiply by 100 for display)
+            order_display["CTR"] = (order_display["CTR"] * 100).map("{:.4f}%".format)
+            order_display["DPVR"] = (order_display["DPVR"] * 100).map("{:.4f}%".format)
+            order_display["Purchase_Rate"] = (order_display["Purchase_Rate"] * 100).map("{:.4f}%".format)
+            # Format numbers with commas
+            order_display["Impressions"] = order_display["Impressions"].map("{:,.0f}".format)
+            order_display["Click-throughs"] = order_display["Click-throughs"].map("{:,.0f}".format)
+            order_display["DPV"] = order_display["DPV"].map("{:,.0f}".format)
+            order_display["Purchases"] = order_display["Purchases"].map("{:,.0f}".format)
+            
+            display_cols = ["Order_ID", "Impressions", "Click-throughs", "CTR", "DPV", "DPVR", "Purchases", "Purchase_Rate"]
+            if "Promoted_ROAS" in order_display.columns:
+                order_display["Promoted_ROAS"] = order_display["Promoted_ROAS"].map("${:.2f}".format)
+                display_cols.append("Promoted_ROAS")
+            if "Total_ROAS" in order_display.columns:
+                order_display["Total_ROAS"] = order_display["Total_ROAS"].map("${:.2f}".format)
+                display_cols.append("Total_ROAS")
+            if "Total_DPVR" in order_display.columns:
+                order_display["Total_DPVR"] = (order_display["Total_DPVR"] * 100).map("{:.4f}%".format)
+                display_cols.append("Total_DPVR")
+            if "Total_Purchase_Rate" in order_display.columns:
+                order_display["Total_Purchase_Rate"] = (order_display["Total_Purchase_Rate"] * 100).map("{:.4f}%".format)
+                display_cols.append("Total_Purchase_Rate")
+            
+            # Filter to only show columns that exist
+            display_cols = [col for col in display_cols if col in order_display.columns]
+            st.dataframe(order_display[display_cols], use_container_width=True, hide_index=True)
+        else:
+            st.info("ℹ️ No order data available with current filters.")
 
     # ==============================
 
