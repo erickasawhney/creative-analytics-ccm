@@ -21,8 +21,8 @@ st.markdown(
     """
 How to use:
 
-1. Download Amazon DSP report [here](https://advertising.amazon.com/dsp/ENTITYA6I16E0BHHHY/report/custom-report/new) (click 'select all' so all columns are included in report)
-2. Download creative images (JPGs) and name them by creative identifier (Recommend all same size)
+1. Download Amazon DSP report [here](https://advertising.amazon.com/dsp/ENTITYA6I16E0BHHHY/report/custom-report/new) (click 'SELECT ALL' so all columns are included in report, and filter date by ALL TIME)
+2. Download creative images/videos (JPGs or MP4s) and name them by creative identifier (Recommend all same size)
 4. Upload the report and images below
 5. Select filters
 5. Enjoy!
@@ -346,8 +346,12 @@ def find_column(df, candidates):
     return None
 
 @st.cache_data(show_spinner=False)
-def load_and_process(file_bytes):
-    df = pd.read_excel(BytesIO(file_bytes), dtype=str, keep_default_na=False)
+def load_and_process(file_bytes, file_name):
+    # Detect file type and read accordingly
+    if file_name.lower().endswith('.csv'):
+        df = pd.read_csv(BytesIO(file_bytes), dtype=str, keep_default_na=False)
+    else:
+        df = pd.read_excel(BytesIO(file_bytes), dtype=str, keep_default_na=False)
     df = normalize_columns(df)
     return process_campaign_data(df)
 
@@ -666,22 +670,22 @@ st.markdown("Upload your campaign data and creative images to get started.")
 
 col1, col2 = st.columns([3, 1])
 with col1:
-    uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx", "xls"])
+    uploaded_file = st.file_uploader("Upload an Excel or CSV file", type=["xlsx", "xls", "csv"])
 with col2:
     st.markdown("<br>", unsafe_allow_html=True)
     st.caption("*ensure you have added all columns in DSP")
 uploaded_images = st.file_uploader(
-    "Upload images – ensure file name includes creative identifier/name - RECOMMEND ALL SAME SIZE",
-    type=["png", "jpg", "jpeg"],
+    "Upload images/videos – ensure file name includes creative identifier/name - RECOMMEND ALL SAME SIZE",
+    type=["png", "jpg", "jpeg", "mp4", "mov", "avi", "webm"],
     accept_multiple_files=True,
     key="imgs"
 )
 st.markdown("---")
 
 # ==============================
-# Image Mapping (Fixed)
+# Image/Video Mapping (Fixed)
 # ==============================
-image_dict = {}
+image_dict = {}  # Will store tuples: (asset, asset_type) where asset_type is 'image' or 'video'
 unmatched_images = []
 matched_summary = []
 
@@ -749,15 +753,28 @@ if uploaded_images:
     progress_bar = st.progress(0)
     for i, f in enumerate(uploaded_images):
         try:
-            img = Image.open(BytesIO(f.getvalue()))
             name = f.name
+            file_ext = name.lower().split('.')[-1] if '.' in name else ''
+            
+            # Determine if this is a video or image file
+            video_extensions = ['mp4', 'mov', 'avi', 'webm']
+            is_video = file_ext in video_extensions
+            
             # use normalized filename (no ext, alnum only) as the key
             clean_name = re.sub(r"\.[^.]+$", "", name).strip()
             key = _norm_key(clean_name)
 
             if key:
-                image_dict[key] = img
-                matched_summary.append(f"{name} → {key}")
+                if is_video:
+                    # Store video as bytes with type marker
+                    video_bytes = f.getvalue()
+                    image_dict[key] = (video_bytes, 'video', file_ext)
+                    matched_summary.append(f"{name} → {key} (video)")
+                else:
+                    # Store image as PIL Image with type marker
+                    img = Image.open(BytesIO(f.getvalue()))
+                    image_dict[key] = (img, 'image', file_ext)
+                    matched_summary.append(f"{name} → {key} (image)")
             else:
                 unmatched_images.append(f.name)
 
@@ -775,8 +792,9 @@ if uploaded_images:
 # ==============================
 if uploaded_file is not None:
     file_bytes = uploaded_file.getvalue()
+    file_name = uploaded_file.name
     with st.spinner("Processing data…"):
-        processed, raw_df = load_and_process(file_bytes)
+        processed, raw_df = load_and_process(file_bytes, file_name)
     if processed is None:
         st.stop()
 
@@ -808,7 +826,6 @@ if uploaded_file is not None:
     # ==============================
     # CREATIVE ANALYSIS
     # ==============================
-    st.markdown("---")
     st.subheader("🎯 CREATIVE PERFORMANCE")
     st.markdown("Visualize creative performance from top to lowest performing by KPI. Configure filters below to customize your view.")
     
@@ -1028,6 +1045,94 @@ if uploaded_file is not None:
     with col3:
         pass
 
+    # Show benchmark inputs only for current metric if either benchmark is enabled
+    if show_advertiser_benchmark or show_category_benchmark:
+        benchmark_labels = {
+            "CTR": "CTR",
+            "DPVR": "Promoted DPVR",
+            "Purchase_Rate": "Promoted Purchase Rate",
+            "Promoted_ROAS": "Promoted ROAS",
+            "Total_ROAS": "Total ROAS",
+            "Total_DPVR": "Total DPVR",
+            "Total_Purchase_Rate": "Total Purchase Rate",
+            "Subscription sign-ups": "Subscription Sign-ups",
+            "App subscription sign-ups": "App Subscription Sign-ups",
+            "Cost per subscription": "Cost per Subscription",
+        }
+        units = {"CTR": "%", "DPVR": "%", "Purchase_Rate": "%", "Promoted_ROAS": "$", "Total_ROAS": "$", "Total_DPVR": "%", "Total_Purchase_Rate": "%", "Subscription sign-ups": "#", "App subscription sign-ups": "#", "Cost per subscription": "$"}
+        examples = {"CTR": "2.0", "DPVR": "1.5", "Purchase_Rate": "0.5", "Promoted_ROAS": "4.0", "Total_ROAS": "6.0", "Total_DPVR": "2.5", "Total_Purchase_Rate": "0.8", "Subscription sign-ups": "100", "App subscription sign-ups": "50", "Cost per subscription": "10.0"}
+
+        if metric in benchmark_labels:
+            bench_col1, bench_col2 = st.columns([1, 1])
+            with bench_col1:
+                if show_advertiser_benchmark:
+                    # Adjust max_value based on metric type
+                    max_val = 10000.0 if metric in ["Subscription sign-ups", "App subscription sign-ups", "Cost per subscription"] else 100.0
+                    advertiser_benchmark = st.number_input(
+                        f"Advertiser Benchmark ({units[metric]})",
+                        min_value=0.0,
+                        max_value=max_val,
+                        value=None,
+                        step=0.1,
+                        help=f"Enter advertiser benchmark value",
+                        placeholder=f"e.g., {examples[metric]}",
+                        key="advertiser_benchmark"
+                    )
+                else:
+                    advertiser_benchmark = None
+                # Update the specific benchmark value
+                if metric == "CTR": benchmark_ctr = advertiser_benchmark or benchmark_ctr
+                elif metric == "DPVR": benchmark_dpvr = advertiser_benchmark or benchmark_dpvr
+                elif metric == "Purchase_Rate": benchmark_pr = advertiser_benchmark or benchmark_pr
+                elif metric == "Promoted_ROAS": benchmark_promoted = advertiser_benchmark or benchmark_promoted
+                elif metric == "Total_ROAS": benchmark_total = advertiser_benchmark or benchmark_total
+                elif metric == "Total_DPVR": benchmark_total_dpvr = advertiser_benchmark or benchmark_total_dpvr
+                elif metric == "Total_Purchase_Rate": benchmark_total_pr = advertiser_benchmark or benchmark_total_pr
+                elif metric == "Subscription sign-ups": benchmark_subscriptions = advertiser_benchmark or benchmark_subscriptions
+                elif metric == "App subscription sign-ups": benchmark_app_subscriptions = advertiser_benchmark or benchmark_app_subscriptions
+                elif metric == "Cost per subscription": benchmark_cost_per_sub = advertiser_benchmark or benchmark_cost_per_sub
+            
+            with bench_col2:
+                if show_category_benchmark:
+                    # Adjust max_value based on metric type
+                    max_val = 10000.0 if metric in ["Subscription sign-ups", "App subscription sign-ups", "Cost per subscription"] else 100.0
+                    category_benchmark = st.number_input(
+                        f"Category Benchmark ({units[metric]})",
+                        min_value=0.0,
+                        max_value=max_val,
+                        value=None,
+                        step=0.1,
+                        help=f"Enter category benchmark value",
+                        placeholder=f"e.g., {examples[metric]}",
+                        key="category_benchmark"
+                    )
+                else:
+                    category_benchmark = None
+                # Update the specific benchmark value
+                if metric == "CTR": benchmark_ctr_category = category_benchmark or benchmark_ctr_category
+                elif metric == "DPVR": benchmark_dpvr_category = category_benchmark or benchmark_dpvr_category
+                elif metric == "Purchase_Rate": benchmark_pr_category = category_benchmark or benchmark_pr_category
+                elif metric == "Promoted_ROAS": benchmark_promoted_category = category_benchmark or benchmark_promoted_category
+                elif metric == "Total_ROAS": benchmark_total_category = category_benchmark or benchmark_total_category
+                elif metric == "Total_DPVR": benchmark_total_dpvr_category = category_benchmark or benchmark_total_dpvr_category
+                elif metric == "Total_Purchase_Rate": benchmark_total_pr_category = category_benchmark or benchmark_total_pr_category
+                elif metric == "Subscription sign-ups": benchmark_subscriptions_category = category_benchmark or benchmark_subscriptions_category
+                elif metric == "App subscription sign-ups": benchmark_app_subscriptions_category = category_benchmark or benchmark_app_subscriptions_category
+                elif metric == "Cost per subscription": benchmark_cost_per_sub_category = category_benchmark or benchmark_cost_per_sub_category
+
+            # Add a color key for the benchmark lines
+            legend_items = []
+            if show_advertiser_benchmark:
+                legend_items.append('<span style="display: flex; align-items: center;"><span style="width: 32px; height: 0; border-top: 4px dotted orange; margin-right: 8px;"></span><span style="font-size: 15px;">Advertiser Benchmark</span></span>')
+            if show_category_benchmark:
+                legend_items.append('<span style="display: flex; align-items: center;"><span style="width: 32px; height: 0; border-top: 4px dashed purple; margin-right: 8px;"></span><span style="font-size: 15px;">Category Benchmark</span></span>')
+            
+            if legend_items:
+                st.markdown(
+                    f'<div style="display: flex; align-items: center; gap: 24px; margin-top: 8px;">{"" .join(legend_items)}</div>',
+                    unsafe_allow_html=True
+                )
+
     st.markdown("---")
 
     # Filter grouped data based on creative identifier selection
@@ -1183,96 +1288,6 @@ if uploaded_file is not None:
     benchmark_subscriptions_category = 120.0
     benchmark_app_subscriptions_category = 60.0
     benchmark_cost_per_sub_category = 8.0
-
-    # Show benchmark inputs only for current metric if either benchmark is enabled
-    if show_advertiser_benchmark or show_category_benchmark:
-        benchmark_labels = {
-            "CTR": "CTR",
-            "DPVR": "Promoted DPVR",
-            "Purchase_Rate": "Promoted Purchase Rate",
-            "Promoted_ROAS": "Promoted ROAS",
-            "Total_ROAS": "Total ROAS",
-            "Total_DPVR": "Total DPVR",
-            "Total_Purchase_Rate": "Total Purchase Rate",
-            "Subscription sign-ups": "Subscription Sign-ups",
-            "App subscription sign-ups": "App Subscription Sign-ups",
-            "Cost per subscription": "Cost per Subscription",
-        }
-        units = {"CTR": "%", "DPVR": "%", "Purchase_Rate": "%", "Promoted_ROAS": "$", "Total_ROAS": "$", "Total_DPVR": "%", "Total_Purchase_Rate": "%", "Subscription sign-ups": "#", "App subscription sign-ups": "#", "Cost per subscription": "$"}
-        examples = {"CTR": "2.0", "DPVR": "1.5", "Purchase_Rate": "0.5", "Promoted_ROAS": "4.0", "Total_ROAS": "6.0", "Total_DPVR": "2.5", "Total_Purchase_Rate": "0.8", "Subscription sign-ups": "100", "App subscription sign-ups": "50", "Cost per subscription": "10.0"}
-
-        if metric in benchmark_labels:
-            bench_col1, bench_col2 = st.columns([1, 1])
-            with bench_col1:
-                if show_advertiser_benchmark:
-                    # Adjust max_value based on metric type
-                    max_val = 10000.0 if metric in ["Subscription sign-ups", "App subscription sign-ups", "Cost per subscription"] else 100.0
-                    advertiser_benchmark = st.number_input(
-                        f"Advertiser Benchmark ({units[metric]})",
-                        min_value=0.0,
-                        max_value=max_val,
-                        value=None,
-                        step=0.1,
-                        help=f"Enter advertiser benchmark value",
-                        placeholder=f"e.g., {examples[metric]}",
-                        key="advertiser_benchmark"
-                    )
-                else:
-                    advertiser_benchmark = None
-                # Update the specific benchmark value
-                if metric == "CTR": benchmark_ctr = advertiser_benchmark or benchmark_ctr
-                elif metric == "DPVR": benchmark_dpvr = advertiser_benchmark or benchmark_dpvr
-                elif metric == "Purchase_Rate": benchmark_pr = advertiser_benchmark or benchmark_pr
-                elif metric == "Promoted_ROAS": benchmark_promoted = advertiser_benchmark or benchmark_promoted
-                elif metric == "Total_ROAS": benchmark_total = advertiser_benchmark or benchmark_total
-                elif metric == "Total_DPVR": benchmark_total_dpvr = advertiser_benchmark or benchmark_total_dpvr
-                elif metric == "Total_Purchase_Rate": benchmark_total_pr = advertiser_benchmark or benchmark_total_pr
-                elif metric == "Subscription sign-ups": benchmark_subscriptions = advertiser_benchmark or benchmark_subscriptions
-                elif metric == "App subscription sign-ups": benchmark_app_subscriptions = advertiser_benchmark or benchmark_app_subscriptions
-                elif metric == "Cost per subscription": benchmark_cost_per_sub = advertiser_benchmark or benchmark_cost_per_sub
-            
-            with bench_col2:
-                if show_category_benchmark:
-                    # Adjust max_value based on metric type
-                    max_val = 10000.0 if metric in ["Subscription sign-ups", "App subscription sign-ups", "Cost per subscription"] else 100.0
-                    category_benchmark = st.number_input(
-                        f"Category Benchmark ({units[metric]})",
-                        min_value=0.0,
-                        max_value=max_val,
-                        value=None,
-                        step=0.1,
-                        help=f"Enter category benchmark value",
-                        placeholder=f"e.g., {examples[metric]}",
-                        key="category_benchmark"
-                    )
-                else:
-                    category_benchmark = None
-                # Update the specific benchmark value
-                if metric == "CTR": benchmark_ctr_category = category_benchmark or benchmark_ctr_category
-                elif metric == "DPVR": benchmark_dpvr_category = category_benchmark or benchmark_dpvr_category
-                elif metric == "Purchase_Rate": benchmark_pr_category = category_benchmark or benchmark_pr_category
-                elif metric == "Promoted_ROAS": benchmark_promoted_category = category_benchmark or benchmark_promoted_category
-                elif metric == "Total_ROAS": benchmark_total_category = category_benchmark or benchmark_total_category
-                elif metric == "Total_DPVR": benchmark_total_dpvr_category = category_benchmark or benchmark_total_dpvr_category
-                elif metric == "Total_Purchase_Rate": benchmark_total_pr_category = category_benchmark or benchmark_total_pr_category
-                elif metric == "Subscription sign-ups": benchmark_subscriptions_category = category_benchmark or benchmark_subscriptions_category
-                elif metric == "App subscription sign-ups": benchmark_app_subscriptions_category = category_benchmark or benchmark_app_subscriptions_category
-                elif metric == "Cost per subscription": benchmark_cost_per_sub_category = category_benchmark or benchmark_cost_per_sub_category
-
-            # Add a color key for the benchmark lines
-            legend_items = []
-            if show_advertiser_benchmark:
-                legend_items.append('<span style="display: flex; align-items: center;"><span style="width: 32px; height: 0; border-top: 4px dotted orange; margin-right: 8px;"></span><span style="font-size: 15px;">Advertiser Benchmark</span></span>')
-            if show_category_benchmark:
-                legend_items.append('<span style="display: flex; align-items: center;"><span style="width: 32px; height: 0; border-top: 4px dashed purple; margin-right: 8px;"></span><span style="font-size: 15px;">Category Benchmark</span></span>')
-            
-            if legend_items:
-                st.markdown(
-                    f'<div style="display: flex; align-items: center; gap: 24px; margin-top: 8px;">{"".join(legend_items)}</div>',
-                    unsafe_allow_html=True
-                )
-    
-
 
     # Create figure
     has_order_data = False
@@ -1490,10 +1505,10 @@ if uploaded_file is not None:
             # For 7+ creatives: Compact layout
             cols = st.columns(actual_creatives_shown, gap="small")
         
-        # Display images in the created columns
+        # Display images/videos in the created columns
         for i, (_, r) in enumerate(chart_df.iterrows()):
             with cols[i]:
-                img = _find_image_for_row(r, image_dict)
+                asset_data = _find_image_for_row(r, image_dict)
                 cap = get_display_name(r.get("Group_Key") or "")
                 cap = str(cap).replace("<br>", " ")
                 
@@ -1502,23 +1517,32 @@ if uploaded_file is not None:
                 width = 40 if actual_creatives_shown == 1 else 25
                 cap = "\n".join(textwrap.wrap(cap, width=width)) if cap else ""
                 
-                if img:
-                    # Display image with manual or adaptive sizing
-                    if use_manual_size:
-                        # Manual size control: all images same width
-                        st.image(img, width=image_width)
-                    else:
-                        # Adaptive sizing based on number of creatives
-                        if actual_creatives_shown <= 3:
-                            # For few images, use larger width setting to maximize space usage
-                            st.image(img, use_container_width=True, width=None)
+                if asset_data:
+                    asset, asset_type, file_ext = asset_data
+                    
+                    if asset_type == 'video':
+                        # Display video using Streamlit's native video player (more memory-efficient)
+                        st.video(asset, format=f"video/{file_ext}", start_time=0)
+                        # Display caption with larger font
+                        st.markdown(f"<p style='text-align: center; font-size: 16px;'>{cap}</p>", unsafe_allow_html=True)
+                    
+                    else:  # asset_type == 'image'
+                        # Display image with manual or adaptive sizing
+                        if use_manual_size:
+                            # Manual size control: all images same width
+                            st.image(asset, width=image_width)
                         else:
-                            st.image(img, use_container_width=True)
-                    # Display caption with larger font
-                    st.markdown(f"<p style='text-align: center; font-size: 16px;'>{cap}</p>", unsafe_allow_html=True)
+                            # Adaptive sizing based on number of creatives
+                            if actual_creatives_shown <= 3:
+                                # For few images, use larger width setting to maximize space usage
+                                st.image(asset, use_container_width=True, width=None)
+                            else:
+                                st.image(asset, use_container_width=True)
+                        # Display caption with larger font
+                        st.markdown(f"<p style='text-align: center; font-size: 16px;'>{cap}</p>", unsafe_allow_html=True)
                 else:
                     st.markdown(f"<p style='text-align: center; font-size: 16px;'><strong>{cap}</strong></p>", unsafe_allow_html=True)
-                    st.write("*No image available*")
+                    st.write("*No image/video available*")
     
 
 
@@ -1736,119 +1760,129 @@ if uploaded_file is not None:
             ]
         
         # Aggregate by size
-        size_agg = size_filtered_data.groupby(size_col).agg({
-            "Impressions": "sum",
-            "Click-throughs": "sum",
-            "DPV": "sum",
-            "Purchases": "sum"
-        }).reset_index()
-        
-        # Calculate metrics
-        size_agg["CTR"] = (size_agg["Click-throughs"] / size_agg["Impressions"]).fillna(0)
-        size_agg["DPVR"] = (size_agg["DPV"] / size_agg["Impressions"]).fillna(0)
-        size_agg["Purchase_Rate"] = (size_agg["Purchases"] / size_agg["Impressions"]).fillna(0)
-        
-        # Add ROAS if available
-        if "Sales_USD" in size_filtered_data.columns and "Total_Cost" in size_filtered_data.columns:
-            size_roas_agg = size_filtered_data.groupby(size_col).agg({
-                "Sales_USD": "sum",
-                "Total_Cost": "sum"
-            }).reset_index()
-            size_agg = size_agg.merge(size_roas_agg, on=size_col, how="left")
-            size_agg["Promoted_ROAS"] = (size_agg["Sales_USD"] / size_agg["Total_Cost"]).fillna(0)
-        
-        if "Total_Sales_USD" in size_filtered_data.columns and "Total_Cost" in size_filtered_data.columns:
-            size_total_roas_agg = size_filtered_data.groupby(size_col).agg({
-                "Total_Sales_USD": "sum",
-                "Total_Cost": "sum"
-            }).reset_index()
-            size_agg = size_agg.merge(size_total_roas_agg, on=size_col, how="left", suffixes=('', '_y'))
-            # Use Total_Cost from the merge if it exists, otherwise keep the original
-            if "Total_Cost_y" in size_agg.columns:
-                size_agg["Total_Cost"] = size_agg["Total_Cost"].fillna(size_agg["Total_Cost_y"])
-                size_agg = size_agg.drop(columns=["Total_Cost_y"])
-            size_agg["Total_ROAS"] = (size_agg["Total_Sales_USD"] / size_agg["Total_Cost"]).fillna(0)
-        
-        # Add Total DPVR and Total Purchase Rate if available
-        if "Total_DPV" in size_filtered_data.columns:
-            size_total_dpv_agg = size_filtered_data.groupby(size_col).agg({"Total_DPV": "sum"}).reset_index()
-            size_agg = size_agg.merge(size_total_dpv_agg, on=size_col, how="left")
-            size_agg["Total_DPVR"] = (size_agg["Total_DPV"] / size_agg["Impressions"]).fillna(0)
-        
-        if "Total_Purchases" in size_filtered_data.columns:
-            size_total_purch_agg = size_filtered_data.groupby(size_col).agg({"Total_Purchases": "sum"}).reset_index()
-            size_agg = size_agg.merge(size_total_purch_agg, on=size_col, how="left")
-            size_agg["Total_Purchase_Rate"] = (size_agg["Total_Purchases"] / size_agg["Impressions"]).fillna(0)
-        
-        # Sort by selected metric for size analysis
-        if size_metric in size_agg.columns:
-            size_agg = size_agg.sort_values(by=size_metric, ascending=False)
-        
-        # Create size performance chart
-        if not size_agg.empty and size_metric in size_agg.columns:
-            fig_size = px.bar(
-                size_agg,
-                x=size_col,
-                y=size_metric,
-                text=size_metric,
-                color_discrete_sequence=[bar_color],
-                height=400
-            )
-            
-            # Format text based on metric type
-            if size_metric in ["CTR", "DPVR", "Purchase_Rate", "Total_DPVR", "Total_Purchase_Rate"]:
-                text_template = "%{y:.4f}"
-            else:
-                text_template = "%{y:.2f}"
-            
-            fig_size.update_traces(
-                texttemplate=text_template,
-                textposition="outside"
-            )
-            
-            fig_size.update_layout(
-                title="",
-                xaxis_title="Ad Size",
-                yaxis_title=metric_labels.get(size_metric, size_metric),
-                xaxis_tickangle=45,
-                showlegend=False,
-                margin=dict(b=100, t=40)
-            )
-            
-            st.plotly_chart(fig_size, use_container_width=True)
-            
-            # Show size summary table
-            st.markdown("**Size Performance Summary**")
-            size_display = size_agg.copy()
-            # Format percentages (multiply by 100 for display)
-            size_display["CTR"] = (size_display["CTR"] * 100).map("{:.4f}%".format)
-            size_display["DPVR"] = (size_display["DPVR"] * 100).map("{:.4f}%".format)
-            size_display["Purchase_Rate"] = (size_display["Purchase_Rate"] * 100).map("{:.4f}%".format)
-            # Format numbers with commas
-            size_display["Impressions"] = size_display["Impressions"].map("{:,.0f}".format)
-            size_display["Click-throughs"] = size_display["Click-throughs"].map("{:,.0f}".format)
-            size_display["DPV"] = size_display["DPV"].map("{:,.0f}".format)
-            size_display["Purchases"] = size_display["Purchases"].map("{:,.0f}".format)
-            
-            display_cols = [size_col, "Impressions", "Click-throughs", "CTR", "DPV", "DPVR", "Purchases", "Purchase_Rate"]
-            if "Promoted_ROAS" in size_display.columns:
-                size_display["Promoted_ROAS"] = size_display["Promoted_ROAS"].map("${:.2f}".format)
-                display_cols.append("Promoted_ROAS")
-            if "Total_ROAS" in size_display.columns:
-                size_display["Total_ROAS"] = size_display["Total_ROAS"].map("${:.2f}".format)
-                display_cols.append("Total_ROAS")
-            if "Total_DPVR" in size_display.columns:
-                size_display["Total_DPVR"] = (size_display["Total_DPVR"] * 100).map("{:.4f}%".format)
-                display_cols.append("Total_DPVR")
-            if "Total_Purchase_Rate" in size_display.columns:
-                size_display["Total_Purchase_Rate"] = (size_display["Total_Purchase_Rate"] * 100).map("{:.4f}%".format)
-                display_cols.append("Total_Purchase_Rate")
-            
-            # Filter to only show columns that exist
-            display_cols = [col for col in display_cols if col in size_display.columns]
-            st.dataframe(size_display[display_cols], use_container_width=True, hide_index=True)
-        else:
+        if size_filtered_data.empty or size_col not in size_filtered_data.columns:
             st.info("ℹ️ No size data available with current filters.")
+        else:
+            size_agg = size_filtered_data.groupby(size_col).agg({
+                "Impressions": "sum",
+                "Click-throughs": "sum",
+                "DPV": "sum",
+                "Purchases": "sum"
+            }).reset_index()
+            
+            # Calculate metrics
+            size_agg["CTR"] = (size_agg["Click-throughs"] / size_agg["Impressions"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            size_agg["DPVR"] = (size_agg["DPV"] / size_agg["Impressions"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            size_agg["Purchase_Rate"] = (size_agg["Purchases"] / size_agg["Impressions"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+        
+            # Add ROAS if available
+            if "Sales_USD" in size_filtered_data.columns and "Total_Cost" in size_filtered_data.columns:
+                size_roas_agg = size_filtered_data.groupby(size_col).agg({
+                    "Sales_USD": "sum",
+                    "Total_Cost": "sum"
+                }).reset_index()
+                size_agg = size_agg.merge(size_roas_agg, on=size_col, how="left")
+                size_agg["Promoted_ROAS"] = (size_agg["Sales_USD"] / size_agg["Total_Cost"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            
+            if "Total_Sales_USD" in size_filtered_data.columns and "Total_Cost" in size_filtered_data.columns:
+                size_total_roas_agg = size_filtered_data.groupby(size_col).agg({
+                    "Total_Sales_USD": "sum",
+                    "Total_Cost": "sum"
+                }).reset_index()
+                size_agg = size_agg.merge(size_total_roas_agg, on=size_col, how="left", suffixes=('', '_y'))
+                # Use Total_Cost from the merge if it exists, otherwise keep the original
+                if "Total_Cost_y" in size_agg.columns:
+                    size_agg["Total_Cost"] = size_agg["Total_Cost"].fillna(size_agg["Total_Cost_y"])
+                    size_agg = size_agg.drop(columns=["Total_Cost_y"])
+                size_agg["Total_ROAS"] = (size_agg["Total_Sales_USD"] / size_agg["Total_Cost"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            
+            # Add Total DPVR and Total Purchase Rate if available
+            if "Total_DPV" in size_filtered_data.columns:
+                size_total_dpv_agg = size_filtered_data.groupby(size_col).agg({"Total_DPV": "sum"}).reset_index()
+                size_agg = size_agg.merge(size_total_dpv_agg, on=size_col, how="left")
+                size_agg["Total_DPVR"] = (size_agg["Total_DPV"] / size_agg["Impressions"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            
+            if "Total_Purchases" in size_filtered_data.columns:
+                size_total_purch_agg = size_filtered_data.groupby(size_col).agg({"Total_Purchases": "sum"}).reset_index()
+                size_agg = size_agg.merge(size_total_purch_agg, on=size_col, how="left")
+                size_agg["Total_Purchase_Rate"] = (size_agg["Total_Purchases"] / size_agg["Impressions"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            
+            # Sort by selected metric for size analysis
+            if size_metric in size_agg.columns:
+                size_agg = size_agg.sort_values(by=size_metric, ascending=False)
+            
+            # Create size performance chart
+            if not size_agg.empty and len(size_agg) > 0 and size_metric in size_agg.columns:
+                fig_size = px.bar(
+                    size_agg,
+                    x=size_col,
+                    y=size_metric,
+                    text=size_metric,
+                    color_discrete_sequence=[bar_color],
+                    height=400
+                )
+                
+                # Format text based on metric type
+                if size_metric in ["CTR", "DPVR", "Purchase_Rate", "Total_DPVR", "Total_Purchase_Rate"]:
+                    text_template = "%{y:.4f}"
+                else:
+                    text_template = "%{y:.2f}"
+                
+                fig_size.update_traces(
+                    texttemplate=text_template,
+                    textposition="outside"
+                )
+                
+                fig_size.update_layout(
+                    title="",
+                    xaxis_title="Ad Size",
+                    yaxis_title=metric_labels.get(size_metric, size_metric),
+                    xaxis_tickangle=45,
+                    showlegend=False,
+                    margin=dict(b=100, t=40)
+                )
+                
+                st.plotly_chart(fig_size, use_container_width=True)
+                
+                # Show size summary table
+                st.markdown("**Size Performance Summary**")
+                size_display = size_agg.copy()
+                # Format percentages (multiply by 100 for display)
+                if "CTR" in size_display.columns:
+                    size_display["CTR"] = (size_display["CTR"] * 100).map("{:.4f}%".format)
+                if "DPVR" in size_display.columns:
+                    size_display["DPVR"] = (size_display["DPVR"] * 100).map("{:.4f}%".format)
+                if "Purchase_Rate" in size_display.columns:
+                    size_display["Purchase_Rate"] = (size_display["Purchase_Rate"] * 100).map("{:.4f}%".format)
+                # Format numbers with commas
+                if "Impressions" in size_display.columns:
+                    size_display["Impressions"] = size_display["Impressions"].map("{:,.0f}".format)
+                if "Click-throughs" in size_display.columns:
+                    size_display["Click-throughs"] = size_display["Click-throughs"].map("{:,.0f}".format)
+                if "DPV" in size_display.columns:
+                    size_display["DPV"] = size_display["DPV"].map("{:,.0f}".format)
+                if "Purchases" in size_display.columns:
+                    size_display["Purchases"] = size_display["Purchases"].map("{:,.0f}".format)
+                
+                display_cols = [size_col, "Impressions", "Click-throughs", "CTR", "DPV", "DPVR", "Purchases", "Purchase_Rate"]
+                if "Promoted_ROAS" in size_display.columns:
+                    size_display["Promoted_ROAS"] = size_display["Promoted_ROAS"].map("${:.2f}".format)
+                    display_cols.append("Promoted_ROAS")
+                if "Total_ROAS" in size_display.columns:
+                    size_display["Total_ROAS"] = size_display["Total_ROAS"].map("${:.2f}".format)
+                    display_cols.append("Total_ROAS")
+                if "Total_DPVR" in size_display.columns:
+                    size_display["Total_DPVR"] = (size_display["Total_DPVR"] * 100).map("{:.4f}%".format)
+                    display_cols.append("Total_DPVR")
+                if "Total_Purchase_Rate" in size_display.columns:
+                    size_display["Total_Purchase_Rate"] = (size_display["Total_Purchase_Rate"] * 100).map("{:.4f}%".format)
+                    display_cols.append("Total_Purchase_Rate")
+                
+                # Filter to only show columns that exist
+                display_cols = [col for col in display_cols if col in size_display.columns]
+                st.dataframe(size_display[display_cols], use_container_width=True, hide_index=True)
+            else:
+                st.info("ℹ️ No size data available with current filters.")
 
     # ==============================
     # ORDER PERFORMANCE CHART
@@ -1958,139 +1992,149 @@ if uploaded_file is not None:
             order_filtered_data = order_filtered_data[order_filtered_data["Order_ID"].isin(order_analysis_selected_orders)]
         
         # Aggregate by order
-        order_agg = order_filtered_data.groupby("Order_ID").agg({
-            "Impressions": "sum",
-            "Click-throughs": "sum",
-            "DPV": "sum",
-            "Purchases": "sum"
-        }).reset_index()
-        
-        # Calculate metrics
-        order_agg["CTR"] = (order_agg["Click-throughs"] / order_agg["Impressions"]).fillna(0)
-        order_agg["DPVR"] = (order_agg["DPV"] / order_agg["Impressions"]).fillna(0)
-        order_agg["Purchase_Rate"] = (order_agg["Purchases"] / order_agg["Impressions"]).fillna(0)
-        
-        # Add ROAS if available
-        if "Sales_USD" in order_filtered_data.columns and "Total_Cost" in order_filtered_data.columns:
-            order_roas_agg = order_filtered_data.groupby("Order_ID").agg({
-                "Sales_USD": "sum",
-                "Total_Cost": "sum"
-            }).reset_index()
-            order_agg = order_agg.merge(order_roas_agg, on="Order_ID", how="left")
-            order_agg["Promoted_ROAS"] = (order_agg["Sales_USD"] / order_agg["Total_Cost"]).fillna(0)
-        
-        if "Total_Sales_USD" in order_filtered_data.columns and "Total_Cost" in order_filtered_data.columns:
-            order_total_roas_agg = order_filtered_data.groupby("Order_ID").agg({
-                "Total_Sales_USD": "sum",
-                "Total_Cost": "sum"
-            }).reset_index()
-            order_agg = order_agg.merge(order_total_roas_agg, on="Order_ID", how="left", suffixes=('', '_y'))
-            # Use Total_Cost from the merge if it exists, otherwise keep the original
-            if "Total_Cost_y" in order_agg.columns:
-                order_agg["Total_Cost"] = order_agg["Total_Cost"].fillna(order_agg["Total_Cost_y"])
-                order_agg = order_agg.drop(columns=["Total_Cost_y"])
-            order_agg["Total_ROAS"] = (order_agg["Total_Sales_USD"] / order_agg["Total_Cost"]).fillna(0)
-        
-        # Add Total DPVR and Total Purchase Rate if available
-        if "Total_DPV" in order_filtered_data.columns:
-            order_total_dpv_agg = order_filtered_data.groupby("Order_ID").agg({"Total_DPV": "sum"}).reset_index()
-            order_agg = order_agg.merge(order_total_dpv_agg, on="Order_ID", how="left")
-            order_agg["Total_DPVR"] = (order_agg["Total_DPV"] / order_agg["Impressions"]).fillna(0)
-        
-        if "Total_Purchases" in order_filtered_data.columns:
-            order_total_purch_agg = order_filtered_data.groupby("Order_ID").agg({"Total_Purchases": "sum"}).reset_index()
-            order_agg = order_agg.merge(order_total_purch_agg, on="Order_ID", how="left")
-            order_agg["Total_Purchase_Rate"] = (order_agg["Total_Purchases"] / order_agg["Impressions"]).fillna(0)
-        
-        # Remove any potential duplicates and sort by selected metric
-        order_agg = order_agg.drop_duplicates(subset=['Order_ID']).reset_index(drop=True)
-        
-        if order_metric in order_agg.columns:
-            order_agg = order_agg.sort_values(by=order_metric, ascending=False).reset_index(drop=True)
-        
-        # Create order performance chart
-        if not order_agg.empty and order_metric in order_agg.columns:
-            # Truncate long order names for display
-            order_agg["Order_Display"] = order_agg["Order_ID"].apply(lambda x: x[:50] + "..." if len(str(x)) > 50 else str(x))
-            
-            # If truncation created duplicates, make display names unique by adding suffixes
-            duplicate_count = order_agg.duplicated(subset=['Order_Display']).sum()
-            if duplicate_count > 0:
-                # Add numeric suffix to duplicates to make them unique
-                display_counts = {}
-                unique_displays = []
-                for display in order_agg['Order_Display']:
-                    if display in display_counts:
-                        display_counts[display] += 1
-                        unique_displays.append(f"{display} ({display_counts[display]})")
-                    else:
-                        display_counts[display] = 1
-                        unique_displays.append(display)
-                order_agg['Order_Display'] = unique_displays
-            
-            # Format text based on metric type
-            if order_metric in ["CTR", "DPVR", "Purchase_Rate", "Total_DPVR", "Total_Purchase_Rate"]:
-                text_template = "%{y:.4f}"
-            else:
-                text_template = "%{y:.2f}"
-            
-            # Create figure with go.Bar for explicit control
-            fig_order = go.Figure()
-            fig_order.add_trace(go.Bar(
-                x=order_agg["Order_Display"],
-                y=order_agg[order_metric],
-                text=order_agg[order_metric].round(4 if order_metric in ["CTR", "DPVR", "Purchase_Rate", "Total_DPVR", "Total_Purchase_Rate"] else 2),
-                texttemplate=text_template,
-                textposition="outside",
-                marker=dict(color=bar_color),
-                hovertemplate="<b>%{x}</b><br>" + metric_labels.get(order_metric, order_metric) + ": " + text_template + "<extra></extra>",
-                name=""
-            ))
-            
-            fig_order.update_layout(
-                title="",
-                xaxis_title="Order / Campaign",
-                yaxis_title=metric_labels.get(order_metric, order_metric),
-                xaxis_tickangle=45,
-                showlegend=False,
-                margin=dict(b=150, t=40),
-                height=400
-            )
-            
-            st.plotly_chart(fig_order, use_container_width=True)
-            
-            # Show order summary table
-            st.markdown("**Order Performance Summary**")
-            order_display = order_agg.copy()
-            # Format percentages (multiply by 100 for display)
-            order_display["CTR"] = (order_display["CTR"] * 100).map("{:.4f}%".format)
-            order_display["DPVR"] = (order_display["DPVR"] * 100).map("{:.4f}%".format)
-            order_display["Purchase_Rate"] = (order_display["Purchase_Rate"] * 100).map("{:.4f}%".format)
-            # Format numbers with commas
-            order_display["Impressions"] = order_display["Impressions"].map("{:,.0f}".format)
-            order_display["Click-throughs"] = order_display["Click-throughs"].map("{:,.0f}".format)
-            order_display["DPV"] = order_display["DPV"].map("{:,.0f}".format)
-            order_display["Purchases"] = order_display["Purchases"].map("{:,.0f}".format)
-            
-            display_cols = ["Order_ID", "Impressions", "Click-throughs", "CTR", "DPV", "DPVR", "Purchases", "Purchase_Rate"]
-            if "Promoted_ROAS" in order_display.columns:
-                order_display["Promoted_ROAS"] = order_display["Promoted_ROAS"].map("${:.2f}".format)
-                display_cols.append("Promoted_ROAS")
-            if "Total_ROAS" in order_display.columns:
-                order_display["Total_ROAS"] = order_display["Total_ROAS"].map("${:.2f}".format)
-                display_cols.append("Total_ROAS")
-            if "Total_DPVR" in order_display.columns:
-                order_display["Total_DPVR"] = (order_display["Total_DPVR"] * 100).map("{:.4f}%".format)
-                display_cols.append("Total_DPVR")
-            if "Total_Purchase_Rate" in order_display.columns:
-                order_display["Total_Purchase_Rate"] = (order_display["Total_Purchase_Rate"] * 100).map("{:.4f}%".format)
-                display_cols.append("Total_Purchase_Rate")
-            
-            # Filter to only show columns that exist
-            display_cols = [col for col in display_cols if col in order_display.columns]
-            st.dataframe(order_display[display_cols], use_container_width=True, hide_index=True)
-        else:
+        if order_filtered_data.empty:
             st.info("ℹ️ No order data available with current filters.")
+        else:
+            order_agg = order_filtered_data.groupby("Order_ID").agg({
+                "Impressions": "sum",
+                "Click-throughs": "sum",
+                "DPV": "sum",
+                "Purchases": "sum"
+            }).reset_index()
+            
+            # Calculate metrics
+            order_agg["CTR"] = (order_agg["Click-throughs"] / order_agg["Impressions"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            order_agg["DPVR"] = (order_agg["DPV"] / order_agg["Impressions"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            order_agg["Purchase_Rate"] = (order_agg["Purchases"] / order_agg["Impressions"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            
+            # Add ROAS if available
+            if "Sales_USD" in order_filtered_data.columns and "Total_Cost" in order_filtered_data.columns:
+                order_roas_agg = order_filtered_data.groupby("Order_ID").agg({
+                    "Sales_USD": "sum",
+                    "Total_Cost": "sum"
+                }).reset_index()
+                order_agg = order_agg.merge(order_roas_agg, on="Order_ID", how="left")
+                order_agg["Promoted_ROAS"] = (order_agg["Sales_USD"] / order_agg["Total_Cost"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            
+            if "Total_Sales_USD" in order_filtered_data.columns and "Total_Cost" in order_filtered_data.columns:
+                order_total_roas_agg = order_filtered_data.groupby("Order_ID").agg({
+                    "Total_Sales_USD": "sum",
+                    "Total_Cost": "sum"
+                }).reset_index()
+                order_agg = order_agg.merge(order_total_roas_agg, on="Order_ID", how="left", suffixes=('', '_y'))
+                # Use Total_Cost from the merge if it exists, otherwise keep the original
+                if "Total_Cost_y" in order_agg.columns:
+                    order_agg["Total_Cost"] = order_agg["Total_Cost"].fillna(order_agg["Total_Cost_y"])
+                    order_agg = order_agg.drop(columns=["Total_Cost_y"])
+                order_agg["Total_ROAS"] = (order_agg["Total_Sales_USD"] / order_agg["Total_Cost"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            
+            # Add Total DPVR and Total Purchase Rate if available
+            if "Total_DPV" in order_filtered_data.columns:
+                order_total_dpv_agg = order_filtered_data.groupby("Order_ID").agg({"Total_DPV": "sum"}).reset_index()
+                order_agg = order_agg.merge(order_total_dpv_agg, on="Order_ID", how="left")
+                order_agg["Total_DPVR"] = (order_agg["Total_DPV"] / order_agg["Impressions"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            
+            if "Total_Purchases" in order_filtered_data.columns:
+                order_total_purch_agg = order_filtered_data.groupby("Order_ID").agg({"Total_Purchases": "sum"}).reset_index()
+                order_agg = order_agg.merge(order_total_purch_agg, on="Order_ID", how="left")
+                order_agg["Total_Purchase_Rate"] = (order_agg["Total_Purchases"] / order_agg["Impressions"]).replace([float('inf'), -float('inf')], 0).fillna(0)
+            
+            # Remove any potential duplicates and sort by selected metric
+            order_agg = order_agg.drop_duplicates(subset=['Order_ID']).reset_index(drop=True)
+            
+            if order_metric in order_agg.columns:
+                order_agg = order_agg.sort_values(by=order_metric, ascending=False).reset_index(drop=True)
+            
+            # Create order performance chart
+            if not order_agg.empty and len(order_agg) > 0 and order_metric in order_agg.columns:
+                # Truncate long order names for display
+                order_agg["Order_Display"] = order_agg["Order_ID"].apply(lambda x: x[:50] + "..." if len(str(x)) > 50 else str(x))
+                
+                # If truncation created duplicates, make display names unique by adding suffixes
+                duplicate_count = order_agg.duplicated(subset=['Order_Display']).sum()
+                if duplicate_count > 0:
+                    # Add numeric suffix to duplicates to make them unique
+                    display_counts = {}
+                    unique_displays = []
+                    for display in order_agg['Order_Display']:
+                        if display in display_counts:
+                            display_counts[display] += 1
+                            unique_displays.append(f"{display} ({display_counts[display]})")
+                        else:
+                            display_counts[display] = 1
+                            unique_displays.append(display)
+                    order_agg['Order_Display'] = unique_displays
+                
+                # Format text based on metric type
+                if order_metric in ["CTR", "DPVR", "Purchase_Rate", "Total_DPVR", "Total_Purchase_Rate"]:
+                    text_template = "%{y:.4f}"
+                else:
+                    text_template = "%{y:.2f}"
+                
+                # Create figure with go.Bar for explicit control
+                fig_order = go.Figure()
+                fig_order.add_trace(go.Bar(
+                    x=order_agg["Order_Display"],
+                    y=order_agg[order_metric],
+                    text=order_agg[order_metric].round(4 if order_metric in ["CTR", "DPVR", "Purchase_Rate", "Total_DPVR", "Total_Purchase_Rate"] else 2),
+                    texttemplate=text_template,
+                    textposition="outside",
+                    marker=dict(color=bar_color),
+                    hovertemplate="<b>%{x}</b><br>" + metric_labels.get(order_metric, order_metric) + ": " + text_template + "<extra></extra>",
+                    name=""
+                ))
+                
+                fig_order.update_layout(
+                    title="",
+                    xaxis_title="Order / Campaign",
+                    yaxis_title=metric_labels.get(order_metric, order_metric),
+                    xaxis_tickangle=45,
+                    showlegend=False,
+                    margin=dict(b=150, t=40),
+                    height=400
+                )
+                
+                st.plotly_chart(fig_order, use_container_width=True)
+                
+                # Show order summary table
+                st.markdown("**Order Performance Summary**")
+                order_display = order_agg.copy()
+                # Format percentages (multiply by 100 for display)
+                if "CTR" in order_display.columns:
+                    order_display["CTR"] = (order_display["CTR"] * 100).map("{:.4f}%".format)
+                if "DPVR" in order_display.columns:
+                    order_display["DPVR"] = (order_display["DPVR"] * 100).map("{:.4f}%".format)
+                if "Purchase_Rate" in order_display.columns:
+                    order_display["Purchase_Rate"] = (order_display["Purchase_Rate"] * 100).map("{:.4f}%".format)
+                # Format numbers with commas
+                if "Impressions" in order_display.columns:
+                    order_display["Impressions"] = order_display["Impressions"].map("{:,.0f}".format)
+                if "Click-throughs" in order_display.columns:
+                    order_display["Click-throughs"] = order_display["Click-throughs"].map("{:,.0f}".format)
+                if "DPV" in order_display.columns:
+                    order_display["DPV"] = order_display["DPV"].map("{:,.0f}".format)
+                if "Purchases" in order_display.columns:
+                    order_display["Purchases"] = order_display["Purchases"].map("{:,.0f}".format)
+                
+                display_cols = ["Order_ID", "Impressions", "Click-throughs", "CTR", "DPV", "DPVR", "Purchases", "Purchase_Rate"]
+                if "Promoted_ROAS" in order_display.columns:
+                    order_display["Promoted_ROAS"] = order_display["Promoted_ROAS"].map("${:.2f}".format)
+                    display_cols.append("Promoted_ROAS")
+                if "Total_ROAS" in order_display.columns:
+                    order_display["Total_ROAS"] = order_display["Total_ROAS"].map("${:.2f}".format)
+                    display_cols.append("Total_ROAS")
+                if "Total_DPVR" in order_display.columns:
+                    order_display["Total_DPVR"] = (order_display["Total_DPVR"] * 100).map("{:.4f}%".format)
+                    display_cols.append("Total_DPVR")
+                if "Total_Purchase_Rate" in order_display.columns:
+                    order_display["Total_Purchase_Rate"] = (order_display["Total_Purchase_Rate"] * 100).map("{:.4f}%".format)
+                    display_cols.append("Total_Purchase_Rate")
+                
+                # Filter to only show columns that exist
+                display_cols = [col for col in display_cols if col in order_display.columns]
+                st.dataframe(order_display[display_cols], use_container_width=True, hide_index=True)
+            else:
+                st.info("ℹ️ No order data available with current filters.")
 
     # ==============================
 
@@ -2188,7 +2232,7 @@ if uploaded_file is not None:
     # ==============================
     # Full Table
     # ==============================
-    st.subheader(f"ALL RESULTS (n={total_creatives})")
+    st.subheader(f"CREATIVE PERFORMANCE SUMMARY")
     
     # Initialize session state for edited creative names
     if 'edited_creative_names' not in st.session_state:
