@@ -364,14 +364,14 @@ def process_campaign_data(df):
         purch_col    = find_column(df, ["purchases", "purchase", "sales", "units"])
         total_purch_col = find_column(df, ["total purchases", "total_purchases", "total_purchases_usd", "total_purchases_count"])
         total_dpv_col = find_column(df, ["total dpv", "total_dpv", "total dpvs", "total_dpv_count", "total_dpvs"]) 
-        order_col    = find_column(df, [
-            "order", "orders", "order id", "order_id", "order number",
-            "orderid", "order#", "order #", "ordernum", "order id #",
-            "campaign name", "campaign", "campaign_name"
-        ])
         
-        # Detect Campaign ID column separately
-        campaign_id_col = find_column(df, ["campaign id", "campaign_id", "campaignid", "campaign #"])
+        # Detect both campaign name and campaign ID separately
+        campaign_name_col = find_column(df, ["campaign name", "campaign", "campaign_name", "order name", "order_name"])
+        campaign_id_col = find_column(df, ["campaign id", "campaign_id", "campaignid", "order id", "order_id", "orderid"])
+        
+        # If campaign_id_col matches campaign_name_col, search for a distinct ID column
+        if campaign_id_col == campaign_name_col:
+            campaign_id_col = find_column(df, ["campaign id", "campaign_id", "campaignid"])
 
         # Detect Sales USD, Total Sales USD and Total Cost columns for ROAS calculation
         sales_col = find_column(df, ["sales usd", "sales", "revenue", "revenue usd"])
@@ -393,8 +393,10 @@ def process_campaign_data(df):
         if purch_col:    rename_map[purch_col]    = "Purchases"
         if total_purch_col: rename_map[total_purch_col] = "Total_Purchases"
         if total_dpv_col: rename_map[total_dpv_col] = "Total_DPV"
-        if order_col:    rename_map[order_col]    = "Order_ID"
-        if campaign_id_col: rename_map[campaign_id_col] = "Campaign_ID"
+        # Handle campaign name and ID separately
+        if campaign_name_col: rename_map[campaign_name_col] = "Campaign_Name"
+        if campaign_id_col and campaign_id_col != campaign_name_col: 
+            rename_map[campaign_id_col] = "Campaign_ID"
         if sales_col:    rename_map[sales_col]    = "Sales_USD"
         if total_sales_col: rename_map[total_sales_col] = "Total_Sales_USD"
         if cost_col:     rename_map[cost_col]     = "Total_Cost"
@@ -435,15 +437,32 @@ def process_campaign_data(df):
             else:
                 df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
-        if "Order_ID" in df.columns:
-            df["Order_ID"] = df["Order_ID"].astype(str).str.strip()
-            df["Order_ID"] = df["Order_ID"].replace({"nan": "", "<NA>": ""}).str.strip()
-            df["Order_ID"] = df["Order_ID"].replace({"": None})
-        
-        if "Campaign_ID" in df.columns:
+        # Create composite Order_ID from Campaign_Name and Campaign_ID
+        if "Campaign_Name" in df.columns and "Campaign_ID" in df.columns:
+            # Clean up both columns
+            df["Campaign_Name"] = df["Campaign_Name"].astype(str).str.strip()
+            df["Campaign_Name"] = df["Campaign_Name"].replace({"nan": "", "<NA>": ""}).str.strip()
             df["Campaign_ID"] = df["Campaign_ID"].astype(str).str.strip()
             df["Campaign_ID"] = df["Campaign_ID"].replace({"nan": "", "<NA>": ""}).str.strip()
-            df["Campaign_ID"] = df["Campaign_ID"].replace({"": None})
+            
+            # Create composite Order_ID: "Campaign Name (ID: Campaign_ID)"
+            # Use Campaign_ID as the unique key to differentiate orders with same name
+            df["Order_ID"] = df.apply(
+                lambda row: f"{row['Campaign_Name']} (ID: {row['Campaign_ID']})" 
+                if row['Campaign_Name'] and row['Campaign_ID']
+                else (row['Campaign_Name'] if row['Campaign_Name'] else (row['Campaign_ID'] if row['Campaign_ID'] else None)),
+                axis=1
+            )
+        elif "Campaign_Name" in df.columns:
+            # Only campaign name available
+            df["Campaign_Name"] = df["Campaign_Name"].astype(str).str.strip()
+            df["Campaign_Name"] = df["Campaign_Name"].replace({"nan": "", "<NA>": ""}).str.strip()
+            df["Order_ID"] = df["Campaign_Name"].replace({"": None})
+        elif "Campaign_ID" in df.columns:
+            # Only campaign ID available
+            df["Campaign_ID"] = df["Campaign_ID"].astype(str).str.strip()
+            df["Campaign_ID"] = df["Campaign_ID"].replace({"nan": "", "<NA>": ""}).str.strip()
+            df["Order_ID"] = df["Campaign_ID"].replace({"": None})
 
         return df, df
 
@@ -800,28 +819,13 @@ if uploaded_file is not None:
 
     # Order Filter Options
     order_options = ["All Orders"]
-    order_to_campaign = {}  # Map order names to campaign IDs
     if "Order_ID" in processed.columns:
-        # Build mapping of Order_ID to Campaign_ID (if available)
-        if "Campaign_ID" in processed.columns:
-            temp_df = processed[["Order_ID", "Campaign_ID"]].drop_duplicates()
-            for _, row in temp_df.iterrows():
-                order_id = str(row["Order_ID"]) if pd.notna(row["Order_ID"]) else None
-                campaign_id = str(row["Campaign_ID"]) if pd.notna(row["Campaign_ID"]) else None
-                if order_id and campaign_id:
-                    order_to_campaign[order_id] = campaign_id
-        
         unique_orders = (processed["Order_ID"]
                          .dropna()
                          .astype(str)
                          .unique())
-        # Create display labels with campaign IDs
-        for order in sorted([o for o in unique_orders if o]):
-            if order in order_to_campaign:
-                display_label = f"{order} (ID: {order_to_campaign[order]})"
-            else:
-                display_label = order
-            order_options.append(display_label)
+        # Order_ID already contains the composite "Name (ID: xxx)" format from process_campaign_data
+        order_options.extend(sorted([o for o in unique_orders if o]))
 
     # ==============================
     # CREATIVE ANALYSIS
