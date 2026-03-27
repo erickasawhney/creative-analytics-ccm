@@ -1000,34 +1000,32 @@ if uploaded_file is not None:
     else:
         filtered = grouped.copy()
 
-
-    # Creative identifier filter (updated to include edited names)
-
-        # Creative identifier filter (with 'Select All' option)
-        identifier_options = []
-        if grouped is not None and not grouped.empty and "Group_Key" in grouped.columns:
-            try:
-                original_options = sorted(grouped["Group_Key"].astype(str).unique().tolist())
-                if 'edited_creative_names' in st.session_state:
-                    identifier_options = [
-                        st.session_state.edited_creative_names.get(opt, opt)
-                        for opt in original_options
-                    ]
-                else:
-                    identifier_options = original_options
-            except Exception:
-                identifier_options = []
-        # Always add 'Select All' option at the top
-        identifier_options = ["Select All"] + identifier_options
-        prev_identifier_filter = st.session_state.get('identifier_filter', [])
-        identifier_filter = st.multiselect(
-            "Creative identifiers",
-            options=identifier_options,
-            default=identifier_options[1:] if "Select All" in prev_identifier_filter else [],
-            key="identifier_filter"
-        )
-        if "Select All" in identifier_filter:
-            identifier_filter = identifier_options[1:]  # All except 'Select All'
+    # Creative identifier filter (with 'Select All' option)
+    identifier_options = []
+    if grouped is not None and not grouped.empty and "Group_Key" in grouped.columns:
+        try:
+            original_options = sorted(grouped["Group_Key"].astype(str).unique().tolist())
+            if 'edited_creative_names' in st.session_state:
+                identifier_options = [
+                    st.session_state.edited_creative_names.get(opt, opt)
+                    for opt in original_options
+                ]
+            else:
+                identifier_options = original_options
+        except Exception:
+            identifier_options = []
+    # Remove any existing 'Select All' to prevent duplicates, then add it at the top
+    identifier_options = [opt for opt in identifier_options if opt != "Select All"]
+    identifier_options = ["Select All"] + identifier_options
+    prev_identifier_filter = st.session_state.get('identifier_filter', [])
+    identifier_filter = st.multiselect(
+        "Creative identifiers",
+        options=identifier_options,
+        default=identifier_options[1:] if "Select All" in prev_identifier_filter else [],
+        key="identifier_filter"
+    )
+    if "Select All" in identifier_filter:
+        identifier_filter = identifier_options[1:]  # All except 'Select All'
 
     # Chart overlay controls
     st.markdown("**Chart Overlays**")
