@@ -860,17 +860,8 @@ if uploaded_file is not None:
             format_func=lambda x: x,
         )
         
-        # Extract actual order names from display labels (remove campaign ID suffix)
-        selected_orders = []
-        for display_label in selected_orders_display:
-            if display_label == "All Orders":
-                selected_orders.append("All Orders")
-            elif " (ID: " in display_label:
-                # Extract order name before the campaign ID
-                order_name = display_label.split(" (ID: ")[0]
-                selected_orders.append(order_name)
-            else:
-                selected_orders.append(display_label)
+        # Use the display labels directly (they already match the Order_ID format)
+        selected_orders = selected_orders_display
     with col2:
         metric_options = ["CTR", "DPVR", "Purchase_Rate"]
         # Add Subscription sign-ups and Cost per subscription if columns exist
@@ -974,6 +965,7 @@ if uploaded_file is not None:
     
     # Apply filters BEFORE aggregation
     filtered_processed = processed.copy()
+    initial_rows = len(filtered_processed)
     
     # Apply date filter if dates are selected
     if has_date_cols and 'filter_start_date' in locals() and 'filter_end_date' in locals() and filter_start_date and filter_end_date:
@@ -986,16 +978,33 @@ if uploaded_file is not None:
             (filtered_processed["Start_Date"] <= filter_end_dt) & 
             (filtered_processed["End_Date"] >= filter_start_dt)
         ]
+        rows_after_date_filter = len(filtered_processed)
+    else:
+        rows_after_date_filter = initial_rows
     
     if min_imps > 0:
         filtered_processed = filtered_processed[filtered_processed["Impressions"] >= min_imps]
+    rows_after_imps_filter = len(filtered_processed)
 
     # ...existing code...
 
     # Aggregate now (so the identifier filter can show the aggregated tuples)
     grouped = aggregate_by_creative(filtered_processed, selected_orders)
     if grouped is None or grouped.empty:
-        st.warning("No data after filtering. Please check your filters or uploaded file.")
+        st.error("⚠️ No data after filtering. Please check your filters:")
+        st.markdown(f"""
+        **Filter Diagnostics:**
+        - Initial rows in data: **{initial_rows:,}**
+        - After date filter: **{rows_after_date_filter:,}** rows
+        - After min impressions filter (>= {min_imps}): **{rows_after_imps_filter:,}** rows
+        - After order filter: **0 rows** (no data remaining)
+        
+        **Suggestions:**
+        1. Try **lowering** the minimum impressions from {min_imps} to 0
+        2. Check if your **date range** matches the data (dates in your file: {processed["Start_Date"].min()} to {processed["End_Date"].max() if has_date_cols else 'N/A'})
+        3. Try selecting **"All Orders"** in the order filter
+        4. Verify the uploaded file has the correct DSP report data
+        """)
         st.stop()
     else:
         filtered = grouped.copy()
