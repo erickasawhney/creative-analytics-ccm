@@ -1,0 +1,14 @@
+[server]
+maxUploadSize = 500
+maxMessageSize = 500
+enableCORS = false
+enableXsrfProtection = false
+headless = true
+
+[theme]
+# Force light theme so the app stays readable on users' machines in dark mode.
+base = "light"
+backgroundColor = "#f6f8fb"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1d2735"
+primaryColor = "#3a4e66"
